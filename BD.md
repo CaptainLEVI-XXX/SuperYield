@@ -37,7 +37,18 @@
 
 
 #### StrategyManager : Decides what to do with the money
-- 
+
+- Receives 5000 USDC from QueueManager
+    ↓
+- Analyzes market conditions:
+    - Current lending rates: 5% supply, 3% borrow
+    - Fixed rates available: 4% for 30 days
+    - Current positions: 80% looped, 10% fixed, 10% reserve
+    ↓
+- Makes allocation:
+    - 4000 USDC → Loop Engine (maintain 80%)
+    - 500 USDC → Fixed Rate (opportunity)
+    - 500 USDC → Reserves (liquidity)
 
 
 #### LoopEngine: Leverage Creator
@@ -76,7 +87,7 @@ managing flash loans and position accounting.
             
 -  this contract monitors real time LTV across all positions , health factor at each venue,Aggregate portfolio health , trigger condition for rebalacning.
 
-#### Rebalancer :  Position Adjuster
+#### Rebalancer : Position Adjuster
 - Adjusts the position to maintain optimal LTV.
 - Rebalancing Scenarios: 
     - 1: Market drops , LTV increases
@@ -140,4 +151,38 @@ managing flash loans and position accounting.
     - Position saved
     - No liquidation penalty
     - LTV back to safe zone
+
+
+#### OracleManager.sol
+Responsibility: Provides reliable price feeds for ALL calculations
+
+
+#### Smart contract architecture
+- SuperVault.sol (ERC4626 + QueueManager + ReserveManager)
+- StrategyManager.sol
+- LoopEngine.sol
+- PositionManager.sol
+- Rebalancer.sol
+- FixedRateAllocator.sol
+- PreLiquidationGuard.sol
+- OracleManager.sol
+
+we can have a EngineManager to handle strategy Manger ,LoopEngine, Rebalancer , Why?
+These three contracts will interact with each other a lot and we can have a single contract to handle all the interactions.
+but the problem will be that we will loose modularity of each contract.
+
+
+what if ? vault -> DaimondProxy { facet1:StrategyManager - facet2:LoopEngine - facet3:Rebalancer }(the problem will how these facet will interact with each other, all the storage will at DiamondProxy but facet can read other facet storage, but in terms of calling the facet function we can use delegatecall which will be expensive)
+- this architecture will be modular and we facets interact with each other than it will be expensive on gas.
+
+
+#### Final thoughts:
+- Vault(erc4626,queueManager,reserveManager). 
+    - this can be a Immuatable vault.
+    - depicts trust for user interfacing contract.
+- Then we can have Execution engine(looping,position,rebalancer)
+    - this can be a mutable contract.
+    - startegies can be changed but the important part is main components will be internal so we will have less gas cost for each transaction.
+
+- Independent Liquidator contract and Oracle contract
 

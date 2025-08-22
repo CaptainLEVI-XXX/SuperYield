@@ -28,8 +28,7 @@ abstract contract Admin2Step {
     /// @dev keccak256("Hashstack._ADMIN_SLOT")
     bytes32 internal constant _ADMIN_SLOT = 0x728a99fd4f405dacd9be416f0ab5362a3b8a45ae01e04e4531610f3b47f0f332;
     /// @dev keccak256("Hashstack.admin._PENDING_ADMIN_SLOT")
-    bytes32 internal constant _PENDING_ADMIN_SLOT =
-        0xd6dfe080f721daab5530894dccfcc2993346c67103e2bcc8748bf87935f5b4d9;
+    bytes32 internal constant _PENDING_ADMIN_SLOT = 0xd6dfe080f721daab5530894dccfcc2993346c67103e2bcc8748bf87935f5b4d9;
     /// @dev keccak256("Hashstack.admin._HANDOVERTIME_ADMIN_SLOT_SEED")
     bytes32 internal constant _HANDOVERTIME_ADMIN_SLOT_SEED =
         0x6550ab69b2fd0d6b77d1a3569484949e74afb818f9de20661d5d5d6082bcd5de;
@@ -44,11 +43,7 @@ abstract contract Admin2Step {
             }
             /// @dev `keccak256(bytes("AdminshipTransferred(address,address)"))
             log3(
-                0,
-                0,
-                0x04d129ae6ee1a7d168abd097a088e4f07a0292c23aefc0e49b5603d029b8543f,
-                sload(_ADMIN_SLOT),
-                _newAdmin
+                0, 0, 0x04d129ae6ee1a7d168abd097a088e4f07a0292c23aefc0e49b5603d029b8543f, sload(_ADMIN_SLOT), _newAdmin
             )
             sstore(_ADMIN_SLOT, _newAdmin)
         }

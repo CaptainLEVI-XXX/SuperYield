@@ -306,11 +306,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
             uint256 shortfall = requiredIdle - vaultState.totalIdle;
 
             /// @notice pull the funds back from the Engine
-
-            unchecked {
-                vaultState.totalIdle += shortfall;
-                vaultState.totalDeployed -= shortfall;
-            }
+            _recallFromEngine(shortfall);
         }
     }
 
@@ -339,8 +335,10 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     function _recallFromEngine(uint256 amount) internal returns (uint256 recalled) {
         recalled = IExecutionEngine(executionEngine).recallCapital(amount);
         if (recalled != 0) {
-            vaultState.totalIdle += recalled;
-            vaultState.totalDeployed = recalled > vaultState.totalDeployed ? 0 : (vaultState.totalDeployed - recalled);
+            unchecked {
+                vaultState.totalIdle += recalled;
+                vaultState.totalDeployed -= recalled;
+            }
             emit CapitalRecalled(recalled);
         }
     }

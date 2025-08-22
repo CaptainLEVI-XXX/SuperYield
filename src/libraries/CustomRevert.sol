@@ -27,6 +27,16 @@ library CustomRevert {
         }
     }
 
+    /// @dev Reverts with a custom error taking (uint256, address) as arguments
+    function revertWith(bytes4 selector, uint256 num, address addr) internal pure {
+        assembly ("memory-safe") {
+            mstore(0x00, selector) // 4-byte selector
+            mstore(0x04, num) // next 32 bytes = uint256
+            mstore(0x24, addr) // next 32 bytes = address (left-padded)
+            revert(0x00, 0x44) // total 68 bytes (4+32+32)
+        }
+    }
+
     /// @dev Reverts with a custom error with an int24 argument in the scratch space
     function revertWith(bytes4 selector, int24 value) internal pure {
         assembly ("memory-safe") {
@@ -42,6 +52,15 @@ library CustomRevert {
             mstore(0, selector)
             mstore(0x04, and(value, 0xffffffffffffffffffffffffffffffffffffffff))
             revert(0, 0x24)
+        }
+    }
+
+    /// @dev Reverts with a custom error with a uint256 argument in the scratch space
+    function revertWith(bytes4 selector, uint256 value) internal pure {
+        assembly ("memory-safe") {
+            mstore(0x00, selector) // write selector at start
+            mstore(0x04, value) // write full 32 bytes after selector
+            revert(0x00, 0x24) // revert with 36 bytes (4 + 32)
         }
     }
 

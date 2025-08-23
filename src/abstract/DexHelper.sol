@@ -70,8 +70,7 @@ abstract contract DexHelper {
     function performSwap(DexSwapCalldata memory swapCalldata) internal returns (bytes memory result) {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
         if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();
-        address router = routeInfo_.router;
-        result = router.callContract(swapCalldata.swapCalldata);
+        result = routeInfo_.router.callContract(swapCalldata.swapCalldata);
     }
 
     function performSwapWithValue(DexSwapCalldata memory swapCalldata, uint256 value)
@@ -80,7 +79,6 @@ abstract contract DexHelper {
     {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
         if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();
-        address router = routeInfo_.router;
-        result = router.callContract(value, swapCalldata.swapCalldata);
+        result = routeInfo_.router.callContract(value, swapCalldata.swapCalldata);
     }
 }

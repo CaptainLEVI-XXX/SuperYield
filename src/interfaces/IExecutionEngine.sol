@@ -5,4 +5,5 @@ pragma solidity ^0.8.22;
 interface IExecutionEngine {
     function deployCapital(uint256 amount) external;
     function recallCapital(uint256 amount) external returns (uint256);
+    function getDeployedValue() external view returns (uint256);
 }

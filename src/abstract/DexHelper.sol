@@ -40,14 +40,14 @@ abstract contract DexHelper {
         }
     }
 
-    function whitelistRoute(string calldata name, address _router) public virtual returns (bytes32) {
+    function whitelistRoute(string memory name, address _router) public virtual returns (bytes32) {
         bytes32 identifier = keccak256(abi.encodePacked(name, _router));
         routeInfo().routes[identifier] = RouteInfo({router: _router, status: true, name: name});
         emit LogRouteSet(identifier);
         return identifier;
     }
 
-    function updateRouteStatus(bytes32[] memory identifier, bool[] memory status) public virtual returns (bool) {
+    function updateRouteStatus(bytes32[] calldata identifier, bool[] calldata status) public virtual returns (bool) {
         uint256 length_ = identifier.length;
 
         if ((length_ != status.length)) {
@@ -67,7 +67,7 @@ abstract contract DexHelper {
         return identifier;
     }
 
-    function performSwap(DexSwapCalldata memory swapCalldata) public virtual returns (bytes memory result) {
+    function performSwap(DexSwapCalldata memory swapCalldata) internal returns (bytes memory result) {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
         if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();
         address router = routeInfo_.router;
@@ -75,8 +75,7 @@ abstract contract DexHelper {
     }
 
     function performSwapWithValue(DexSwapCalldata memory swapCalldata, uint256 value)
-        public
-        virtual
+        internal
         returns (bytes memory result)
     {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];

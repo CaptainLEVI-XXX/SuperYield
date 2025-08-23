@@ -1,294 +1,160 @@
-// // SPDX-License-Identifier: MIT
-// pragma solidity ^0.8.13;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
 
-// import {Address} from "@solady/utils/Address.sol";
-// // import {SafeERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
-// // import {IERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/interfaces/IERC20Upgradeable.sol";
-// import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-// import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {Admin2Step} from "./abstract/Admin2Step.sol";
+import {ISuperVault} from "./interfaces/ISuperVault.sol";
+import {DexHelper} from "./abstract/DexHelper.sol";
+import {CustomRevert} from "./libraries/CustomRevert.sol";
 
-// interface IUserModule is IERC20Upgradeable {
-//     function deposit(
-//         uint256 assets_,
-//         address receiver_
-//     ) external returns (uint256 shares_);
+contract EthVaultWrapper is Admin2Step, DexHelper {
+    using SafeTransferLib for address;
+    using CustomRevert for bytes4;
 
-//     function withdraw(
-//         uint256 assets_,
-//         address receiver_,
-//         address owner_
-//     ) external returns (uint256 shares_);
-// }
+    error EthVaultWrapper__UnexpectedWithdrawAmount();
 
-// contract Events {
-//     event LogUpdateWhitelist(
-//         string indexed name,
-//         address whitelistedRouter,
-//         address whitelistedApproval,
-//         bool indexed status
-//     );
+    event LogRescueFunds(address indexed token, uint256 amount);
 
-//     event LogUpdateWhitelistStatus(string indexed name, bool indexed status);
+    ISuperVault internal immutable vault;
+    address internal immutable asset;
 
-//     event LogRescueFunds(address indexed token, uint256 indexed amount);
-// }
+    constructor(address vault_, address owner_) {
+        vault = ISuperVault(vault_);
+        asset = vault.asset();
 
-// contract ConstantVariables {
-//     struct RouterHelper {
-//         address router;
-//         address approval;
-//         bool status;
-//     }
+        // approve stETH to vault for deposits
+        asset.safeApprove(vault_, type(uint256).max);
 
-//     IERC20Upgradeable internal constant STETH =
-//         IERC20Upgradeable(0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84);
+        _setAdmin(owner_);
 
-//     /// @notice Rescue funds will be transfered to this address upon collection.
-//     address public constant RESCUE_TRANSFERS =
-//         0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e;
-// }
+        // Whitelist routes
+        whitelistRoute("1INCH-V6-A", 0x111111125421cA6dc452d289314280a0f8842A65);
+        whitelistRoute("PARASWAP-V6-A", 0x6A000F20005980200259B80c5102003040001068);
+        whitelistRoute("ZEROX-V4-A", 0xDef1C0ded9bec7F1a1670819833240f027b25EfF);
+        whitelistRoute("KYBER-AGGREGATOR-A", 0x6131B5fae19EA4f9D964eAc0408E4408b66337b5);
+    }
 
-// contract EthVaultWrapperV2 is Ownable, Events, ConstantVariables {
-//     using SafeERC20Upgradeable for IERC20Upgradeable;
+    function whitelistRoute(string memory name, address _router) public virtual override onlyAdmin returns (bytes32) {
+        return super.whitelistRoute(name, _router);
+    }
 
-//     error EthVaultWrapper__OutputInsufficient();
-//     error EthVaultWrapper__UnexpectedWithdrawAmount();
-//     error EthVaultWrapper__InvalidInput();
-//     error EthVaultWrapper__OnlyWhitelisted();
+    function updateRouteStatus(bytes32[] calldata identifier, bool[] calldata status)
+        public
+        virtual
+        override
+        onlyAdmin
+        returns (bool)
+    {
+        return super.updateRouteStatus(identifier, status);
+    }
 
-//     /***********************************|
-//     |           STATE VARIABLES         |
-//     |__________________________________*/
+    function deposit(bytes32 route_, bytes calldata swapCalldata_, address receiver_)
+        external
+        payable
+        returns (uint256 shares)
+    {
+        uint256 balanceBefore_ = asset.balanceOf(address(this));
 
-//     IUserModule internal immutable vault;
+        performSwapWithValue(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}), msg.value);
 
-//     /// @notice mapping to store allowed route names to their
-//     ///         whitelisted router, approval address and status.
-//     mapping(string => RouterHelper) public whitelistedRoutes;
+        uint256 depositAmount_ = asset.balanceOf(address(this)) - balanceBefore_ - 1;
 
-//     constructor(address vault_, address owner_) {
-//         vault = IUserModule(vault_);
+        // deposit output into vault for msg.sender as receiver
+        shares = vault.deposit(depositAmount_, receiver_);
+    }
 
-//         // approve stETH to vault for deposits
-//         STETH.approve(vault_, type(uint256).max);
+    function mint(bytes32 route_, bytes calldata swapCalldata_, address receiver_)
+        external
+        payable
+        returns (uint256 assets)
+    {
+        uint256 balanceBefore_ = asset.balanceOf(address(this));
 
-//         _transferOwnership(owner_);
+        performSwapWithValue(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}), msg.value);
 
-//         // Whitelist routes
-//         whitelistingConstructorHelper(
-//             "1INCH-V6-A",
-//             0x111111125421cA6dc452d289314280a0f8842A65
-//         );
-//         whitelistingConstructorHelper(
-//             "PARASWAP-V6-A",
-//             0x6A000F20005980200259B80c5102003040001068
-//         );
-//         whitelistingConstructorHelper(
-//             "ZEROX-V4-A",
-//             0xDef1C0ded9bec7F1a1670819833240f027b25EfF
-//         );
-//         whitelistingConstructorHelper(
-//             "KYBER-AGGREGATOR-A",
-//             0x6131B5fae19EA4f9D964eAc0408E4408b66337b5
-//         );
-//     }
+        uint256 depositAmount_ = asset.balanceOf(address(this)) - balanceBefore_ - 1;
+        // deposit output into vault for msg.sender as receiver
+        assets = vault.mint(depositAmount_, receiver_);
+    }
 
-//     function whitelistingConstructorHelper(
-//         string memory name,
-//         address routerAddress
-//     ) internal {
-//         whitelistedRoutes[name] = RouterHelper({
-//             router: routerAddress,
-//             approval: routerAddress,
-//             status: true
-//         });
+    function withdraw(bytes32 route_, uint256 amount_, bytes calldata swapCalldata_, address receiver_)
+        external
+        returns (uint256 ethAmount_)
+    {
+        uint256 balanceBefore = asset.balanceOf(address(this));
 
-//         emit LogUpdateWhitelist(name, routerAddress, routerAddress, true);
-//     }
+        vault.withdraw(amount_, address(this), msg.sender);
 
-//     /// @notice Update whitelisted name, routers, approval
-//     ///         addresses and their status.
-//     function updateWhitelist(
-//         string[] memory name_,
-//         address[] memory routers_,
-//         address[] memory approvals_,
-//         bool[] memory status_
-//     ) public onlyOwner {
-//         uint256 length_ = name_.length;
+        uint256 vaultWithdrawnAmount = asset.balanceOf(address(this)) - balanceBefore;
 
-//         if (
-//             (length_ != routers_.length) ||
-//             (length_ != approvals_.length) ||
-//             (length_ != status_.length)
-//         ) {
-//             revert EthVaultWrapper__InvalidInput();
-//         }
+        // -1 to account for potential rounding errors
+        if (vaultWithdrawnAmount < amount_ - 1) {
+            revert EthVaultWrapper__UnexpectedWithdrawAmount();
+        }
 
-//         for (uint256 i = 0; i < length_; i++) {
-//             whitelistedRoutes[name_[i]] = RouterHelper({
-//                 router: routers_[i],
-//                 approval: approvals_[i],
-//                 status: status_[i]
-//             });
+        // approve stETH
+        asset.safeApprove(routeInfo().routes[route_].router, vaultWithdrawnAmount);
 
-//             emit LogUpdateWhitelist(
-//                 name_[i],
-//                 routers_[i],
-//                 approvals_[i],
-//                 status_[i]
-//             );
-//         }
-//     }
+        performSwap(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}));
 
-//     /// @notice Update status of routes.
-//     function updateWhitelistStatus(
-//         string[] memory name_,
-//         bool[] memory status_
-//     ) public onlyOwner {
-//         uint256 length_ = name_.length;
+        ethAmount_ = address(this).balance;
 
-//         if (length_ != status_.length) {
-//             revert EthVaultWrapper__InvalidInput();
-//         }
+        // transfer eth to receiver (usually msg.sender)
+        payable(receiver_).transfer(ethAmount_);
+    }
 
-//         for (uint256 i = 0; i < length_; i++) {
-//             RouterHelper storage helperStorage = whitelistedRoutes[name_[i]];
+    function redeem(bytes32 route_, uint256 shares, bytes calldata swapCalldata_, address receiver_)
+        external
+        returns (uint256 ethAmount_)
+    {
+        uint256 balanceBefore = asset.balanceOf(address(this));
 
-//             helperStorage.status = status_[i];
+        vault.redeem(shares, address(this), msg.sender);
 
-//             emit LogUpdateWhitelistStatus(name_[i], status_[i]);
-//         }
-//     }
+        uint256 vaultWithdrawnAmount = asset.balanceOf(address(this)) - balanceBefore;
 
-//     /// @notice deposits msg.value as stETH into ETH vault. returns shares amount
-//     /// @param route_ Route string through which swap will go, e.g. "1INCH-A"
-//     /// @param swapCalldata_ swap data for ETH -> stETH to call AggregationRouter with
-//     /// @param minStEthIn_ minimum expected stETH to be deposited
-//     /// @param receiver_ receiver of iToken shares from deposit
-//     /// @return actual amount of shares received
-//     function deposit(
-//         string calldata route_,
-//         bytes calldata swapCalldata_,
-//         uint256 minStEthIn_,
-//         address receiver_
-//     ) external payable returns (uint256) {
-//         RouterHelper memory helper_ = whitelistedRoutes[route_];
+        // -1 to account for potential rounding errors
+        if (vaultWithdrawnAmount < shares - 1) EthVaultWrapper__UnexpectedWithdrawAmount.selector.revertWith();
 
-//         if (!helper_.status) {
-//             revert EthVaultWrapper__OnlyWhitelisted();
-//         }
+        // approve stETH
+        asset.safeApprove(routeInfo().routes[route_].router, vaultWithdrawnAmount);
 
-//         uint256 balanceBefore_ = STETH.balanceOf(address(this));
+        performSwap(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}));
 
-//         // swap msg.value to stETH via 1inch
-//         Address.functionCallWithValue(
-//             helper_.router,
-//             swapCalldata_,
-//             msg.value,
-//             "EthVaultWrapper: swap fail"
-//         );
+        ethAmount_ = address(this).balance;
 
-//         uint256 depositAmount_ = STETH.balanceOf(address(this)) - balanceBefore_ - 1;
+        // transfer eth to receiver (usually msg.sender)
+        payable(receiver_).transfer(ethAmount_);
+    }
 
-//         // ensure expected minimum output
-//         if (depositAmount_ < minStEthIn_) {
-//             revert EthVaultWrapper__OutputInsufficient();
-//         }
+    /**
+     * @dev Returns ethereum address
+     */
+    function getEthAddr() internal pure returns (address) {
+        return 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    }
 
-//         // deposit output into vault for msg.sender as receiver
-//         return vault.deposit(depositAmount_, receiver_);
-//     }
+    function rescueFunds(address[] memory _tokens) external returns (uint256[] memory) {
+        uint256 _length = _tokens.length;
+        uint256[] memory _rescueAmounts = new uint256[](_length);
 
-//     /// @notice withdraws amount_ of stETH from msg.sender as owner and swaps it to ETH then transfers to msg.sender
-//     /// @param route_ Route string through which swap will go, e.g. "1INCH-A"
-//     /// @param amount_ amount of stETH to withdraw
-//     /// @param swapCalldata_ swap data for stETH -> ETH to call AggregationRouter with
-//     /// @param minEthOut_ minimum expected output ETH
-//     /// @param receiver_ receiver of withdrawn ETH
-//     /// @return ethAmount_ actual output ETH
-//     function withdraw(
-//         string calldata route_,
-//         uint256 amount_,
-//         bytes calldata swapCalldata_,
-//         uint256 minEthOut_,
-//         address receiver_
-//     ) external returns (uint256 ethAmount_) {
-//         RouterHelper memory helper_ = whitelistedRoutes[route_];
+        for (uint256 i = 0; i < _length; i++) {
+            if (_tokens[i] == getEthAddr()) {
+                _rescueAmounts[i] = address(this).balance;
 
-//         if (!helper_.status) {
-//             revert EthVaultWrapper__OnlyWhitelisted();
-//         }
+                (bool sent,) = admin().call{value: _rescueAmounts[i]}("");
+                require(sent, "Failed to send Ether");
+            } else {
+                _rescueAmounts[i] = _tokens[i].balanceOf(address(this));
 
-//         uint256 stEthBalanceBefore = STETH.balanceOf(address(this));
-//         uint256 withdrawFee = vault.getWithdrawFee(amount_);
-//         // withdraw amount from vault with msg.sender as owner & this contract as receiver
-//         // withdrawn amount = amount - fee
-//         vault.withdraw(amount_, address(this), msg.sender);
+                _tokens[i].safeTransfer(admin(), _rescueAmounts[i]);
+            }
 
-//         uint256 vaultWithdrawnAmount =
-//             STETH.balanceOf(address(this)) - stEthBalanceBefore;
+            emit LogRescueFunds(_tokens[i], _rescueAmounts[i]);
+        }
 
-//         // -1 to account for potential rounding errors
-//         if (vaultWithdrawnAmount + withdrawFee < amount_ - 1) {
-//             revert EthVaultWrapper__UnexpectedWithdrawAmount();
-//         }
+        return _rescueAmounts;
+    }
 
-//         // approve stETH
-//         STETH.approve(helper_.approval, vaultWithdrawnAmount);
-
-//         // swap stETH to ETH
-//         Address.functionCall(
-//             helper_.router,
-//             swapCalldata_,
-//             "EthVaultWrapper: swap fail"
-//         );
-
-//         ethAmount_ = address(this).balance;
-
-//         // ensure expected minimum output
-//         if (ethAmount_ < minEthOut_) {
-//             revert EthVaultWrapper__OutputInsufficient();
-//         }
-
-//         // transfer eth to receiver (usually msg.sender)
-//         payable(receiver_).transfer(ethAmount_);
-//     }
-
-//     /**
-//      *@dev Returns ethereum address
-//      */
-//     function getEthAddr() internal pure returns (address) {
-//         return 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-//     }
-
-//     function rescueFunds(
-//         address[] memory _tokens
-//     ) external returns (uint256[] memory) {
-//         uint256 _length = _tokens.length;
-//         uint256[] memory _rescueAmounts = new uint256[](_length);
-
-//         for (uint256 i = 0; i < _length; i++) {
-//             if (_tokens[i] == getEthAddr()) {
-//                 _rescueAmounts[i] = address(this).balance;
-
-//                 (bool sent, ) = RESCUE_TRANSFERS.call{value: _rescueAmounts[i]}("");
-//                 require(sent, "Failed to send Ether");
-//             } else {
-//                 _rescueAmounts[i] = IERC20Upgradeable(_tokens[i]).balanceOf(
-//                     address(this)
-//                 );
-
-//                 IERC20Upgradeable(_tokens[i]).safeTransfer(
-//                     RESCUE_TRANSFERS,
-//                     _rescueAmounts[i]
-//                 );
-//             }
-
-//             emit LogRescueFunds(_tokens[i], _rescueAmounts[i]);
-//         }
-
-//         return _rescueAmounts;
-//     }
-
-//     receive() external payable {}
-// }
+    receive() external payable {}
+}

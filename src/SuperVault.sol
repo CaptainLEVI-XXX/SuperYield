@@ -17,11 +17,9 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     using SafeTransferLib for address;
     using Reserve for uint256;
 
-    error AsyncOnly();
     error ZeroAddress();
-    error InsufficentLiquidity(uint256 amount);
-    error InsufficientClaimableAssets(uint256 amount);
-    error NotAuthorize();
+    error InsufficientLiquidity(uint256 amount);
+    error NotAuthorized();
     error ZeroShares();
     error VaultIsPaused();
     error ZeroAsset();
@@ -33,7 +31,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
 
     event WithdrawalRequested(address user, uint256 indexed requestId, uint256 shares);
     event WithdrawalProcessed(address user, uint256 indexed requestId, uint256 assets, uint256 ppsLocked);
-    event WithdrawalClaimed(address user, uint256 id, uint256 assets);
+    event WithdrawalClaimed(address user, uint256 id, uint256 assets, address receiver);
     event CapitalDeployed(uint256 amount);
     event CapitalRecalled(uint256 amount);
 
@@ -59,6 +57,12 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     uint256 public totalPendingShares;
     uint256 public totalClaimableAssets;
 
+    enum WithdrawalStatus {
+        PENDING,
+        PROCESSED,
+        CLAIMED
+    }
+
     // Per user Async State
     struct WithdrawalRequest {
         uint256 shares;
@@ -66,8 +70,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         uint256 ppsLocked;
         uint64 requestTime;
         uint64 processTime;
-        bool claimed;
-        bool processed;
+        WithdrawalStatus status;
     }
 
     mapping(address => mapping(uint256 => WithdrawalRequest)) public withdrawalRequests;
@@ -215,8 +218,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
             ppsLocked: getPricePerShare(),
             requestTime: uint64(block.timestamp),
             processTime: 0,
-            claimed: false,
-            processed: false
+            status: WithdrawalStatus.PENDING
         });
 
         totalPendingShares += shares;
@@ -234,12 +236,12 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         // any stage EVM will revert all the changes made in the transaction.
         for (uint256 i = 0; i < users.length; i++) {
             WithdrawalRequest storage request = withdrawalRequests[users[i]][requestIds[i]];
-            if (request.processed && request.claimed) {
+            if (request.status != WithdrawalStatus.PENDING) {
                 RequestAlreadyHandled.selector.revertWith(requestIds[i], users[i]);
             }
             uint256 assetForReq = request.shares * request.ppsLocked / 1e18;
             request.assets = assetForReq;
-            request.processed = true;
+            request.status = WithdrawalStatus.PROCESSED;
             request.processTime = uint64(block.timestamp);
             unchecked {
                 totalAssetNeeded += assetForReq;
@@ -260,29 +262,27 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         returns (uint256 assets)
     {
         WithdrawalRequest storage request = withdrawalRequests[msg.sender][requestId];
-        if (!request.processed || request.claimed) NotClaimable.selector.revertWith(requestId, msg.sender);
-        if (request.assets > vaultState.totalIdle) InsufficentLiquidity.selector.revertWith(requestId);
+        if (request.status != WithdrawalStatus.PROCESSED) NotClaimable.selector.revertWith(requestId, msg.sender);
+        if (request.assets > vaultState.totalIdle) InsufficientLiquidity.selector.revertWith(requestId);
         assets = request.assets;
-        request.claimed = true;
+        request.status = WithdrawalStatus.CLAIMED;
         unchecked {
             vaultState.totalIdle -= assets;
             totalClaimableAssets -= assets;
         }
-        _withdraw(msg.sender, receiver, msg.sender, assets, request.shares);
-        emit WithdrawalClaimed(msg.sender, requestId, assets);
+        // Burn the locked shares now and pay assets
+        _burn(address(this), request.shares);
+
+        asset().safeTransfer(msg.sender, assets);
+
+        emit WithdrawalClaimed(msg.sender, requestId, assets, receiver);
     }
 
     function totalAssets() public view virtual override returns (uint256) {
-        uint256 totalDeployed = vaultState.totalDeployed;
-        uint256 gross = vaultState.totalIdle + totalDeployed;
+        uint256 deployedValue = IExecutionEngine(executionEngine).getDeployedValue();
 
-        // Exclude Claimable Assets: Already Marked to Leave the vault
-        if (gross > totalClaimableAssets) {
-            return gross - totalClaimableAssets;
-        }
-
-        /// @notice will gross always be greater than totalClaimableAssets
-        return 0;
+        uint256 gross = vaultState.totalIdle + deployedValue; // Use actual value
+        return gross > totalClaimableAssets ? gross - totalClaimableAssets : 0;
     }
 
     function getPricePerShare() public view returns (uint256) {
@@ -299,23 +299,38 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
 
     // ensure the vault has enough funds idle full from engine if needed
     function _ensureIdle(uint256 assets) internal {
-        uint256 reserveTarget = _reserveTarget();
+        // uint256 reserveTarget = _reserveTarget();
 
-        uint256 requiredIdle = reserveTarget + assets;
-        if (requiredIdle > totalAssets()) {
-            uint256 shortfall = requiredIdle - vaultState.totalIdle;
+        // uint256 requiredIdle = reserveTarget + assets;
+        if (vaultState.totalIdle < assets) {
+            uint256 shortfall = assets - vaultState.totalIdle;
 
             /// @notice pull the funds back from the Engine
             _recallFromEngine(shortfall);
         }
     }
 
+    function rebalance() external lockUnlock notPaused {
+        uint256 targetReserve = _reserveTarget();
+        uint256 currentIdle = vaultState.totalIdle;
+
+        if (currentIdle > targetReserve * 2) {
+            // Too much idle
+            uint256 toDeploy = currentIdle - targetReserve;
+            _provideFundsToEngine(toDeploy);
+        }
+    }
+
     function provideFundsToEngine(uint256 amount) external {
-        if (msg.sender != executionEngine || msg.sender != admin()) NotAuthorize.selector.revertWith();
+        if (msg.sender != executionEngine && msg.sender != admin()) NotAuthorized.selector.revertWith();
+        _provideFundsToEngine(amount);
+    }
+
+    function _provideFundsToEngine(uint256 amount) internal {
         uint256 reserveTarget = _reserveTarget();
         uint256 idle = vaultState.totalIdle;
 
-        if (amount > idle || idle - amount < reserveTarget) InsufficentLiquidity.selector.revertWith();
+        if (amount > idle || idle - amount < reserveTarget) InsufficientLiquidity.selector.revertWith();
 
         unchecked {
             vaultState.totalIdle -= amount;
@@ -365,5 +380,9 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
 
     function asset() public view virtual override returns (address) {
         return vaultMetadata.underlyingAsset;
+    }
+
+    receive() external payable {
+        OperationLocked.selector.revertWith();
     }
 }

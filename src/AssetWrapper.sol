@@ -58,7 +58,7 @@ contract AssetVaultWrapper is Admin2Step, DexHelper {
 
         incomingAsset.safeTransferFrom(msg.sender, address(this), amount_);
 
-        performSwapWithValue(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}), amount_);
+        performSwap(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}));
 
         uint256 depositAmount_ = asset.balanceOf(address(this)) - balanceBefore_ - 1;
 
@@ -74,7 +74,7 @@ contract AssetVaultWrapper is Admin2Step, DexHelper {
 
         incomingAsset.safeTransferFrom(msg.sender, address(this), amount_);
 
-        performSwapWithValue(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}), amount_);
+        performSwap(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}));
 
         uint256 depositAmount_ = asset.balanceOf(address(this)) - balanceBefore_ - 1;
         // deposit output into vault for msg.sender as receiver

@@ -17,6 +17,7 @@ contract EthVaultWrapper is Admin2Step, DexHelper {
 
     ISuperVault internal immutable vault;
     address internal immutable asset;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     constructor(address vault_, address owner_) {
         vault = ISuperVault(vault_);
@@ -55,7 +56,11 @@ contract EthVaultWrapper is Admin2Step, DexHelper {
     {
         uint256 balanceBefore_ = asset.balanceOf(address(this));
 
-        performSwapWithValue(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}), msg.value);
+        // (bool success,) = WETH.call{value: 1 ether}("");
+
+        // if (!success) revert();
+
+        performSwap(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}));
 
         uint256 depositAmount_ = asset.balanceOf(address(this)) - balanceBefore_ - 1;
 
@@ -70,7 +75,11 @@ contract EthVaultWrapper is Admin2Step, DexHelper {
     {
         uint256 balanceBefore_ = asset.balanceOf(address(this));
 
-        performSwapWithValue(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}), msg.value);
+        // (bool success,) = WETH.call{value: 1 ether}("");
+
+        // if (!success) revert();
+
+        performSwap(DexSwapCalldata({swapCalldata: swapCalldata_, identifier: route_}));
 
         uint256 depositAmount_ = asset.balanceOf(address(this)) - balanceBefore_ - 1;
         // deposit output into vault for msg.sender as receiver

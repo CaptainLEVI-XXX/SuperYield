@@ -3,9 +3,11 @@ pragma solidity ^0.8.22;
 
 import {LibCall} from "@solady/utils/LibCall.sol";
 import {CustomRevert} from "../libraries/CustomRevert.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 
 abstract contract DexHelper {
     using LibCall for address;
+    using SafeTransferLib for address;
     using CustomRevert for bytes4;
 
     error DexHelper__InvalidInput();
@@ -71,14 +73,5 @@ abstract contract DexHelper {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
         if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();
         result = routeInfo_.router.callContract(swapCalldata.swapCalldata);
-    }
-
-    function performSwapWithValue(DexSwapCalldata memory swapCalldata, uint256 value)
-        internal
-        returns (bytes memory result)
-    {
-        RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
-        if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();
-        result = routeInfo_.router.callContract(value, swapCalldata.swapCalldata);
     }
 }

@@ -186,3 +186,143 @@ what if ? vault -> DaimondProxy { facet1:StrategyManager - facet2:LoopEngine - f
 
 - Independent Liquidator contract and Oracle contract
 
+
+
+#### Open position flow: 
+ - for opening an position 
+    - venue Info(ex:aave,compound)
+        - for venue info we need an protocolId/VenueType/
+        - supply amount
+        - supplied asset
+        - borrowed asset
+        - supply denomiaton token
+        - borrow denomiation token
+        - leverage
+        - optimal LTV Band
+
+- It should check first the venue is supported for not
+
+- what should it do ?
+- check the diamond funds for the required asset
+- create a new Position to track
+- maintains a storage for supply amount,borrowed amount,leverage,ltv,health factor etc
+- call the loop engine to create a position
+- it should also return an positionID for that position
+```solidity
+struct PositionParams{
+    uint256 supplyAmount;
+    uint32 leverage;
+    address suppliedAsset;
+    address borrowAsset;
+    address suppliedDenominationToken;
+    address borrowDenominationToken;
+    uint8 lowerBand;
+    uint8 upperBand;
+    bytes memory swapCalldata;
+}
+mapping(uint8 venueId=>mapping(uint8 venueType=>bool)) public isVenueSupported;
+
+function openPosition(uint8 venueId,uint8 venueType,PositionParams calldata params){
+    
+    if !isVenueSupported[venueId][venueType] return error;
+    if params.suppliedAsset.balanceOf(address(this)) - unloopedReserve < params.supplyAmount) revert;
+    // other checks for input params;
+    bytes32 positionId = pointer++;
+    positionInfo[positionId]= params;
+    if (venuueType==FixedRate){
+        _executeFixedRate(fixedRateParams);
+    }else{
+      ILoopEngine(diamond).loop(LoopParams);
+    }
+    emit OpenPosition(positionId);
+    
+}
+```
+#### Close position flow:
+- check if the position is already closed? if so return error 
+- close the position for the given positionID
+    - involves calling the loop engine to pay the debt and withdraw the collateral
+    - update the position storage
+    - delete the position from the storage
+    - return the positionID
+
+#### Close all positions for an Venue ? IS IT NEEDED?
+- check all the openPosition for the given venue
+- close all the positions for the given venue
+    - involves calling the loop engine to pay the debt and withdraw the collateral for each position
+    - update the position storage
+    - delete the position from the storage
+
+#### Switch Position venue flow: 
+- it should involve something with closing an existing position and opening a new position with different venue 
+- or it can involve closing an existing position with adding funds to other venue similar venue;
+- we need to check that the current closed leveraged position should match with other leverage position.that means ....
+- only funds can be transferred to other venue no swapping of assets to different asset
+#### thought process: - May be we need something that stores the type of leverage position: for ex: Supplied asset, borrowed asset
+- these assets should be same for switching position. isPositionSwitchable[suppliedAsset][borrowedAsset] = true;
+        
+#### Rebalance Position
+-- it can be leverage or releverage
+
+
+
+
+##### Check Before : 
+- In the case of upgrading the contract you will find at several positions we used specific storage slots for storing the data to avoid storage collisions. Please note that ac:
+- CASE- I
+``` solidity
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.0;
+
+contract A{
+mapping(address=>bool) public isCheck;
+uint256 public count;
+mapping(address=>uint256) public balance;
+
+function something() public{
+    isCheck[msg.sender] =  true;
+    count++;
+    balance[msg.sender] +=1;
+}
+//67047
+
+}
+
+contract B{
+struct Data{
+    mapping(address=>bool) isCheck;
+    uint256 count;
+    mapping(address=>uint256) balance;
+}
+
+bytes32 public constant DATA_STORAGE = 0x1edd0f8a85d839e3b1cb7825274c24d70cd41e8d831c8c66c337eeab7922063a;
+function dataStorage() internal pure returns(Data storage _data){
+    bytes32 position = DATA_STORAGE;
+    assembly {
+        _data.slot := position
+    }
+}
+
+
+function something() public {
+    Data storage data = dataStorage();
+    data.isCheck[msg.sender] =  true;
+    data.count++;
+    data.balance[msg.sender] += 1;
+}
+
+function isCheck() public view returns(bool){
+    return dataStorage().isCheck[msg.sender];
+}
+
+function count() public view returns(uint256){  
+    return dataStorage().count;
+}
+}
+
+//67150 ---- the additional gas is due to invokation of the dataStorage() function
+
+```
+
+

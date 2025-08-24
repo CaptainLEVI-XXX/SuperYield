@@ -9,8 +9,11 @@ import {IInstaFlashAggregatorInterface} from "./interfaces/IInstaDappFlashLoan.s
 import {IInstaFlashReceiverInterface} from "./interfaces/IInstaDappFlashLoan.sol";
 import {LibCall} from "@solady/utils/LibCall.sol";
 import {DexHelper} from "./abstract/DexHelper.sol";
+import {UUPSUpgradeable} from "@solady/utils/UUPSUpgradeable.sol";
+import {Admin2Step} from "./abstract/Admin2Step.sol";
+import {IULW} from "./interfaces/IULW.sol";
 
-contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelper {
+contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelper, UUPSUpgradeable, Admin2Step {
     using SafeTransferLib for address;
     using CustomRevert for bytes4;
     using LibCall for address;
@@ -54,8 +57,9 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         mapping(uint256 positionId => AllocationType) positionType;
     }
 
-    struct FlashLoanInterface {
+    struct InterfaceInfo {
         IInstaFlashAggregatorInterface aggregator;
+        IULW ulw;
     }
 
     struct LoopFlashLoanInfo {
@@ -65,8 +69,7 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         uint256 flashLoanAmount;
         uint8 leverage;
         DexSwapCalldata swapCalldata;
-        bytes32 identifier;
-        LoopType loopType;
+        bytes32 venueIdentifier;
     }
 
     struct UnLoopFlashLoanInfo {
@@ -75,6 +78,7 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         address repayAmount;
         uint256 withdrawAmount;
         DexSwapCalldata swapCalldata;
+        bytes32 venueIdentifier;
     }
     // let say you want to deploy 4000 USDC at 4x leverage
     // 1. calculate flashLoan amount needed
@@ -101,15 +105,22 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         }
     }
 
-    function flashLoanInterface() internal pure returns (FlashLoanInterface storage _flashLoanInterface) {
+    function interfaceInfo() internal pure returns (InterfaceInfo storage _interfaceInfo) {
         bytes32 position = FLASH_LOAN_INTERFACE;
         assembly {
-            _flashLoanInterface.slot := position
+            _interfaceInfo.slot := position
         }
     }
 
-    function intialize(address instadappExecutor) public initializer {
-        flashLoanInterface().aggregator = IInstaFlashAggregatorInterface(instadappExecutor);
+    constructor() {
+        _disableInitializers();
+    }
+
+    function intialize(address instadappExecutor, address ulw) public initializer {
+        InterfaceInfo storage interfaceInfo_ = interfaceInfo();
+        interfaceInfo_.aggregator = IInstaFlashAggregatorInterface(instadappExecutor);
+        _setAdmin(msg.sender);
+        interfaceInfo_.ulw = IULW(ulw);
     }
 
     function registerVenue(string memory name, address router, AllocationType allocationType)
@@ -157,7 +168,7 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         if (allocationType == AllocationType.Float) {
             /// @dev Call the loop engine to open a position on the required venue
 
-            loop(
+            leverage(
                 LoopFlashLoanInfo({
                     supplyAsset: positionInfo.supplyAsset,
                     borrowAsset: positionInfo.borrowAsset,
@@ -171,9 +182,32 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         }
     }
 
+    function closePosition(
+        uint256 positionId,
+        DexSwapCalldata memory swapCalldata,
+        uint256 repayAmount,
+        uint256 withdrawAmount
+    ) public {
+        /// @Todo check if the position is open
+        /// check is the position is valid
+        PositionStorage storage positionStorage_ = positionStorage();
+        PositionInfo memory positionInfo = positionStorage_.positionInfo[positionId];
+
+        deleverage(
+            UnLoopFlashLoanInfo({
+                supplyAsset: positionInfo.supplyAsset,
+                borrowAsset: positionInfo.borrowAsset,
+                repayAmount: repayAmount,
+                withdrawAmount: withdrawAmount,
+                swapCalldata: swapCalldata,
+                venueIdentifier: positionInfo.identifier
+            })
+        );
+    }
+
     function leverage(LoopFlashLoanInfo memory loopFlashLoanInfo) public {
         bytes memory data = abi.encode(loopFlashLoanInfo, LoopType.Leverage);
-        flashLoanInterface().aggregator.flashLoan(
+        interfaceInfo().aggregator.flashLoan(
             [loopFlashLoanInfo.supplyAsset], [loopFlashLoanInfo.supplyAmount], 0, data, ""
         );
     }
@@ -185,7 +219,12 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
      * @param params The parameters for the unloop operation
      * @return True if the operation was initiated successfully
      */
-    function deleverage(UnLoopFlashLoanInfo memory unLoopFlashLoanInfo) public {}
+    function deleverage(UnLoopFlashLoanInfo memory unLoopFlashLoanInfo) public {
+        bytes memory data = abi.encode(unLoopFlashLoanInfo, LoopType.Deleverage);
+        interfaceInfo().aggregator.flashLoan(
+            [unLoopFlashLoanInfo.borrowAsset], [unLoopFlashLoanInfo.repayAmount], 0, data, ""
+        );
+    }
 
     ///@dev Inherit {IInstaFlashReceiverInterface}
     function executeOperation(
@@ -195,15 +234,16 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         address initiator,
         bytes calldata data
     ) external returns (bool) {
-        if (msg.sender != address(flashLoanInterface().aggregator)) InvalidCaller.selector.revertWith();
+        if (msg.sender != address(interfaceInfo().aggregator)) InvalidCaller.selector.revertWith();
 
-        (LoopFlashLoanInfo memory loopFlashLoanInfo, LoopType loopType) =
-            abi.decode(data, (LoopFlashLoanInfo, LoopType));
+        (, LoopType loopType) = abi.decode(data, (LoopType));
 
         if (loopType == LoopType.Leverage) {
+            (LoopFlashLoanInfo memory loopFlashLoanInfo) = abi.decode(data, (LoopFlashLoanInfo));
             _executeLeverage(loopFlashLoanInfo, premiums[0]);
         } else {
-            _executeDeleverage(loopFlashLoanInfo, premiums[0]);
+            (UnLoopFlashLoanInfo memory unLoopFlashLoanInfo) = abi.decode(data, (UnLoopFlashLoanInfo));
+            _executeDeleverage(unLoopFlashLoanInfo, premiums[0]);
         }
     }
 
@@ -211,13 +251,16 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
         uint256 supply_amount = loopFlashLoanInfo.supplyAmount + loopFlashLoanInfo.flashLoanAmount;
         uint256 flashLoanRepaymentAmount = loopFlashLoanInfo.flashLoanAmount + premium;
         address router = venueStorage().venueInfo[loopFlashLoanInfo.identifier].router;
+        IULW calldataForAction = interfaceInfo().ulw;
 
         loopFlashLoanInfo.supplyAsset.safeApprove(router, supply_amount);
         /// @notice we need a way to directly call the router function with the required calldata
-        bytes memory supplyCalldata = calldataPreparation(supply_amount, loopFlashLoanInfo.supplyAsset, address(this));
+        bytes memory supplyCalldata =
+            calldataForAction.prepareCalldata(supply_amount, loopFlashLoanInfo.supplyAsset, address(this), 0, 0);
         router.callContract(supplyCalldata);
-        bytes memory borrowCalldata =
-            calldataPreparation(flashLoanRepaymentAmount, loopFlashLoanInfo.borrowAsset, address(this));
+        bytes memory borrowCalldata = calldataForAction.prepareCalldata(
+            flashLoanRepaymentAmount, loopFlashLoanInfo.borrowAsset, address(this), 2, 0
+        );
         router.callContract(borrowCalldata);
 
         // get the dex Router
@@ -240,7 +283,35 @@ contract PositionManager is Initializable, IInstaFlashReceiverInterface, DexHelp
      *      3. Swaps withdrawn tokens to repay the flash loan
      *      5. Repays the flash loan
      */
-    function _executeDeleverage(LoopFlashLoanInfo memory loopFlashLoanInfo) internal {}
+    function _executeDeleverage(UnLoopFlashLoanInfo memory unLoopFlashLoanInfo, uint256 premium) internal {
+        uint256 flashLoanRepaymentAmount = unLoopFlashLoanInfo.repayAmount + premium;
+        address router = venueStorage().venueInfo[unLoopFlashLoanInfo.venueIdentifier].router;
+
+        unLoopFlashLoanInfo.borrowAsset.safeApprove(router, unLoopFlashLoanInfo.repayAmount);
+        bytes memory repayCalldata = calldataForAction.prepareCalldata(
+            unLoopFlashLoanInfo.repayAmount, unLoopFlashLoanInfo.borrowAsset, address(this), 3, 0
+        );
+        // repayed the borrowed amount
+        router.callContract(repayCalldata);
+
+        // withdraw the supplied amount
+        bytes memory withdrawCalldata = calldataForAction.prepareCalldata(
+            unLoopFlashLoanInfo.withdrawAmount, unLoopFlashLoanInfo.supplyAsset, address(this), 1, 0
+        );
+        router.callContract(withdrawCalldata);
+
+        //swap the supplied amount to borrow amount
+        address dexRouter = routeInfo().routes[unLoopFlashLoanInfo.swapCalldata.identifier].router;
+        dexRouter.safeApprove(dexRouter, unLoopFlashLoanInfo.withdrawAmount);
+        performSwap(unLoopFlashLoanInfo.swapCalldata);
+
+        //Repay the flash loan
+        unLoopFlashLoanInfo.borrowAsset.safeApprove(msg.sender, flashLoanRepaymentAmount);
+    }
 
     function _validatePositionCalldata(PositionInfo memory positionInfo) internal {}
+
+    function _authorizeUpgrade(address) internal override onlyAdmin {}
+
+    function vaultRegister(address vault, string memory name) external {}
 }

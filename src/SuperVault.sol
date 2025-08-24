@@ -28,6 +28,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     error RequestAlreadyHandled(address user, uint256 requestId);
     error NotClaimable(address user, uint256 requestId);
     error OperationLocked();
+    error RecallFailed();
 
     event WithdrawalRequested(address user, uint256 indexed requestId, uint256 shares);
     event WithdrawalProcessed(address user, uint256 indexed requestId, uint256 assets, uint256 ppsLocked);
@@ -234,7 +235,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         /// @notice we could process it in 2 pass: for first we could calculate the total assets needed and then in
         //       second pass we could move the shares to claimable But that would be inefficient , if transactions is reverted in
         // any stage EVM will revert all the changes made in the transaction.
-        for (uint256 i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length;) {
             WithdrawalRequest storage request = withdrawalRequests[users[i]][requestIds[i]];
             if (request.status != WithdrawalStatus.PENDING) {
                 RequestAlreadyHandled.selector.revertWith(requestIds[i], users[i]);
@@ -247,6 +248,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
                 totalAssetNeeded += assetForReq;
                 totalPendingShares -= request.shares;
                 totalClaimableAssets += assetForReq;
+                i += 1;
             }
 
             emit WithdrawalProcessed(users[i], requestIds[i], assetForReq, request.ppsLocked);
@@ -273,7 +275,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         // Burn the locked shares now and pay assets
         _burn(address(this), request.shares);
 
-        asset().safeTransfer(msg.sender, assets);
+        asset().safeTransfer(receiver, assets);
 
         emit WithdrawalClaimed(msg.sender, requestId, assets, receiver);
     }
@@ -349,13 +351,23 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
 
     function _recallFromEngine(uint256 amount) internal returns (uint256 recalled) {
         recalled = IExecutionEngine(executionEngine).recallCapital(amount);
-        if (recalled != 0) {
-            unchecked {
-                vaultState.totalIdle += recalled;
-                vaultState.totalDeployed -= recalled;
-            }
-            emit CapitalRecalled(recalled);
+
+        if (recalled != amount) {
+            // Either partial or zero recall
+            RecallFailed.selector.revertWith(amount);
         }
+
+        // Safe math: recalled <= totalDeployed
+        if (recalled > vaultState.totalDeployed) {
+            recalled = vaultState.totalDeployed; // clamp
+        }
+
+        unchecked {
+            vaultState.totalIdle += recalled;
+            vaultState.totalDeployed -= recalled;
+        }
+
+        emit CapitalRecalled(recalled);
     }
 
     function pause() public virtual override onlyAdmin {

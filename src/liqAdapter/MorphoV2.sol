@@ -47,7 +47,7 @@ contract MorphoBluePreLiqAdapter is ILendingAdapter {
         preLiq[id] = pre;
     }
 
-    function getPosition(bytes32 marketId,address borrower) external view returns (PositionView memory p) {
+    function getPosition(bytes32 marketId, address borrower) external view returns (PositionView memory p) {
         IMorphoLike.Position memory pos = MORPHO.position(marketId, borrower);
         IMorphoLike.Market memory m = MORPHO.market(marketId);
         if (m.totalBorrowShares == 0) return PositionView({collateral: uint256(pos.collateral), debt: 0});
@@ -63,11 +63,10 @@ contract MorphoBluePreLiqAdapter is ILendingAdapter {
         return _lltv;
     }
 
-    function accrue(bytes32 marketId) external view returns (uint256){
-         /* optional: call MORPHO.accrueInterest via proper interface */ 
-         
+    function accrue(bytes32 marketId) external view returns (uint256) {
+        /* optional: call MORPHO.accrueInterest via proper interface */
     }
-    
+
     function preLiquidate(
         bytes32 marketId,
         address borrower,
@@ -92,5 +91,3 @@ contract MorphoBluePreLiqAdapter is ILendingAdapter {
         return col;
     }
 }
-
-

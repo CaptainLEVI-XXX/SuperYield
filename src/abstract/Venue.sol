@@ -1,15 +1,22 @@
-// // SPDX-License-Identifier: MIT
-// pragma solidity ^0.8.22;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
 
-// abstract contract Venue{
+abstract contract Venue{
 
-//     struct VenueInfo{
-//         address router;   // mention the router or pool address //20bytes
-//         uint256 supplyRate;   // mention the aToken address        // 20 bytes
-//         uint256 borrowRate;   // mention the dToken address        // 20 bytes = = = 2 slots occupied
-//         uint256 availableLiquidity;
-//         uint256 maxLTV;
-//         bool isActive;
-//     }
+    struct VenueInfo {
+        address router;
+        bool active;
+        uint8 id;
+    }
+    // venue info
+    mapping(bytes32 => VenueInfo) public venues;
 
-// }
+    function registerVenue(bytes32 venueId, address router,uint8 identifier) public virtual {
+        venues[venueId] = VenueInfo({router: router, active: true, id: identifier});
+    }
+
+    function setVenueStatus(bytes32 venueId, bool status) external virtual {
+        venues[venueId].active = status;
+    }
+    
+}

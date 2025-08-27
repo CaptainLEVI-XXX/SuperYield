@@ -9,6 +9,9 @@ library Lock {
     /// @dev bytes32(uint256(keccak256("Unlocked")) - 1)
     bytes32 internal constant IS_UNLOCKED_SLOT = 0xc090fc4683624cfc3884e9d8de5eca132f2d0ec062aff75d43c0465d5ceeab23;
 
+
+    error OperationLocked();
+
     /// @dev Unlock the contract
     function unlock() internal {
         assembly ("memory-safe") {
@@ -29,5 +32,10 @@ library Lock {
         assembly ("memory-safe") {
             unlocked := tload(IS_UNLOCKED_SLOT)
         }
+    }
+
+    function _lockUnlock() internal {
+        if (!isUnlocked()) revert OperationLocked();
+        lock();
     }
 }

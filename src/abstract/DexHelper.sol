@@ -69,6 +69,10 @@ abstract contract DexHelper {
         return identifier;
     }
 
+    function getDexRouter(bytes32 identifier) public view returns (address) {
+        return routeInfo().routes[identifier].router;
+    }
+
     function performSwap(DexSwapCalldata memory swapCalldata) internal returns (bytes memory result) {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
         if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();

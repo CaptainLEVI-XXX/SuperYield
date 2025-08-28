@@ -96,6 +96,8 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         console.log("Outside Admin2Step");
         vaultMetadata = VaultMetadata(_underlyingAsset, _name, _symbol);
         console.log("Outside Admin2Step");
+        /// @notice remove this
+        asset().safeApprove(executionEngine, type(uint256).max);
     }
 
     modifier notPaused() {

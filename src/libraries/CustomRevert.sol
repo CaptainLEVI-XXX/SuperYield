@@ -37,30 +37,32 @@ library CustomRevert {
         }
     }
 
-    /// @dev Reverts with a custom error with an int24 argument in the scratch space
-    function revertWith(bytes4 selector, int24 value) internal pure {
-        assembly ("memory-safe") {
-            mstore(0, selector)
-            mstore(0x04, signextend(2, value))
-            revert(0, 0x24)
-        }
-    }
-
-    /// @dev Reverts with a custom error with a uint160 argument in the scratch space
-    function revertWith(bytes4 selector, uint160 value) internal pure {
-        assembly ("memory-safe") {
-            mstore(0, selector)
-            mstore(0x04, and(value, 0xffffffffffffffffffffffffffffffffffffffff))
-            revert(0, 0x24)
-        }
-    }
-
     /// @dev Reverts with a custom error with a uint256 argument in the scratch space
     function revertWith(bytes4 selector, uint256 value) internal pure {
         assembly ("memory-safe") {
             mstore(0x00, selector) // write selector at start
             mstore(0x04, value) // write full 32 bytes after selector
             revert(0x00, 0x24) // revert with 36 bytes (4 + 32)
+        }
+    }
+
+    /// @dev Reverts with a custom error with two address arguments
+    function revertWith(bytes4 selector, address value1, address value2) internal pure {
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            mstore(fmp, selector)
+            mstore(add(fmp, 0x04), and(value1, 0xffffffffffffffffffffffffffffffffffffffff))
+            mstore(add(fmp, 0x24), and(value2, 0xffffffffffffffffffffffffffffffffffffffff))
+            revert(fmp, 0x44)
+        }
+    }
+
+    /// @dev Reverts with a custom error with an int24 argument in the scratch space
+    function revertWith(bytes4 selector, int24 value) internal pure {
+        assembly ("memory-safe") {
+            mstore(0, selector)
+            mstore(0x04, signextend(2, value))
+            revert(0, 0x24)
         }
     }
 
@@ -77,17 +79,6 @@ library CustomRevert {
 
     /// @dev Reverts with a custom error with two uint160 arguments
     function revertWith(bytes4 selector, uint160 value1, uint160 value2) internal pure {
-        assembly ("memory-safe") {
-            let fmp := mload(0x40)
-            mstore(fmp, selector)
-            mstore(add(fmp, 0x04), and(value1, 0xffffffffffffffffffffffffffffffffffffffff))
-            mstore(add(fmp, 0x24), and(value2, 0xffffffffffffffffffffffffffffffffffffffff))
-            revert(fmp, 0x44)
-        }
-    }
-
-    /// @dev Reverts with a custom error with two address arguments
-    function revertWith(bytes4 selector, address value1, address value2) internal pure {
         assembly ("memory-safe") {
             let fmp := mload(0x40)
             mstore(fmp, selector)

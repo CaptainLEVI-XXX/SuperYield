@@ -11,6 +11,7 @@ import {ERC20} from "@solady/tokens/ERC20.sol";
 import {Reserve} from "./libraries/Reserve.sol";
 import {IExecutionEngine} from "./interfaces/IExecutionEngine.sol";
 import {IERC20Metadata} from "./interfaces/IERC20Metadata.sol";
+import {console} from "forge-std/console.sol";
 
 contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     using CustomRevert for bytes4;
@@ -85,9 +86,16 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         string memory _symbol
     ) {
         if (_admin == address(0) || _executionEngine == address(0)) ZeroAddress.selector.revertWith();
+
+        console.log("Inside Admin2Step");
+
         _setAdmin(_admin);
+
+        console.log("Outside Admin2Step");
         executionEngine = _executionEngine;
+        console.log("Outside Admin2Step");
         vaultMetadata = VaultMetadata(_underlyingAsset, _name, _symbol);
+        console.log("Outside Admin2Step");
     }
 
     modifier notPaused() {
@@ -98,10 +106,10 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     /// @notice Locks the function execution to prevent reentrancy attacks
     /// 80% more gas-efficient than normal reentrancy guard(sload)
     modifier lockUnlock() {
-        if (!Lock.isUnlocked()) OperationLocked.selector.revertWith();
-        Lock.lock();
-        _;
+        if (Lock.isUnlocked()) OperationLocked.selector.revertWith();
         Lock.unlock();
+        _;
+        Lock.lock();
     }
 
     function deposit(uint256 assets, address receiver)
@@ -281,9 +289,9 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
     }
 
     function totalAssets() public view virtual override returns (uint256) {
-        uint256 deployedValue = IExecutionEngine(executionEngine).getDeployedValue();
+        uint256 deployedValue = IExecutionEngine(executionEngine).getDeployedValue(address(this));
 
-        uint256 gross = vaultState.totalIdle + deployedValue; // Use actual value
+        uint256 gross = asset().balanceOf(address(this)) + deployedValue; // Use actual value
         return gross > totalClaimableAssets ? gross - totalClaimableAssets : 0;
     }
 

@@ -7,6 +7,7 @@ import {IUniversalLendingWrapper} from "../interfaces/IUniversalLendingWrapper.s
 import {Venue} from "../abstract/Venue.sol";
 import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 import {LibCall} from "@solady/utils/LibCall.sol";
+import {console} from "forge-std/console.sol";
 
 contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     using SafeTransferLib for address;
@@ -55,7 +56,8 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     }
 
     function leverage(LeverageData memory leverageData, uint16 routeForFlashLoan) internal {
-        bytes memory data = abi.encode(leverageData, LoopType.Leverage);
+        // bytes memory data = abi.encode(LoopType.Leverage, leverageData);
+        bytes memory data = abi.encodePacked(uint8(LoopType.Leverage), abi.encode(leverageData));
 
         // Execute flash loan for leverage
         flashAggregator.flashLoan(
@@ -64,7 +66,7 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     }
 
     function deleverage(DeleverageData memory deleverageData, uint16 routeForFlashLoan) internal {
-        bytes memory data = abi.encode(deleverageData, LoopType.Deleverage);
+        bytes memory data = abi.encodePacked(uint8(LoopType.Deleverage), abi.encode(deleverageData));
 
         // Execute flash loan for deleverage
         flashAggregator.flashLoan(
@@ -73,7 +75,7 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     }
 
     function rebalance(RebalanceData memory rebalanceData, uint16 routeForFlashLoan) internal {
-        bytes memory data = abi.encode(rebalanceData, LoopType.Rebalance);
+        bytes memory data = abi.encodePacked(uint8(LoopType.Rebalance), abi.encode(rebalanceData));
 
         // Execute flash loan for rebalance
         flashAggregator.flashLoan(
@@ -91,90 +93,67 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
         require(msg.sender == address(flashAggregator), "Invalid caller");
         require(initiator == address(this), "Invalid initiator");
 
-        (, LoopType loopType) = abi.decode(data, (bytes, LoopType));
+        LoopType loopType = LoopType(uint8(data[0]));
+        bytes memory params = data[1:]; // Rest of the data
 
         if (loopType == LoopType.Leverage) {
-            _executeLeverage(data, assets[0], amounts[0], premiums[0]);
+            _executeLeverage(params, assets[0], amounts[0], premiums[0]);
         } else if (loopType == LoopType.Deleverage) {
-            _executeDeleverage(data, assets[0], amounts[0], premiums[0]);
+            _executeDeleverage(params, assets[0], amounts[0], premiums[0]);
         } else if (loopType == LoopType.Rebalance) {
-            _executeRebalance(data, assets[0], amounts[0], premiums[0]);
+            _executeRebalance(params, assets[0], amounts[0], premiums[0]);
         }
 
         return true;
     }
 
+    // gas used: 1010336
     function _executeLeverage(bytes memory data, address flashAsset, uint256 flashAmount, uint256 premium) internal {
-        (LeverageData memory leverageData,) = abi.decode(data, (LeverageData, LoopType));
-        // Position storage position = positions[leverageData.positionId];
+        LeverageData memory leverageData = abi.decode(data, (LeverageData));
         VenueInfo memory venue = venues[leverageData.venue];
 
         // Step 1: Swap borrowed asset to supply asset
         uint256 swapOutput = leverageData.supplyAsset.balanceOf(address(this));
-        if (leverageData.borrowAsset != leverageData.supplyAsset) {
-            flashAsset.safeApprove(getDexRouter(leverageData.swapCalldata.identifier), flashAmount);
-            performSwap(leverageData.swapCalldata);
-            swapOutput = leverageData.supplyAsset.balanceOf(address(this)) - swapOutput;
-        } else {
-            swapOutput = flashAmount;
-        }
-        // Step 2: Supply everything (initial + swapped) to protocol
-        uint256 totalSupply = leverageData.initialSupply + swapOutput;
-        leverageData.supplyAsset.safeApprove(venue.router, totalSupply);
+        flashAsset.safeApprove(getDexRouter(leverageData.swapCalldata.identifier), flashAmount);
+        performSwap(leverageData.swapCalldata);
+        swapOutput = leverageData.supplyAsset.balanceOf(address(this)) - swapOutput;
 
-        bytes memory supplyCalldata = calldataGenerator.getCalldata(
-            leverageData.supplyAsset,
-            totalSupply,
-            address(this),
-            0, // SUPPLY
-            venue.id
-        );
-        venue.router.callContract(supplyCalldata);
-        /// @notice can we use multi-call to get the call-data for both supply + borrow
-        // Step 3: Borrow to repay flash loan
+        // Step 2: Get batch calldata for supply + borrow
+        uint256 totalSupply = leverageData.initialSupply + swapOutput;
         uint256 borrowAmount = flashAmount + premium;
-        bytes memory borrowCalldata = calldataGenerator.getCalldata(
-            leverageData.borrowAsset,
-            borrowAmount,
-            address(this),
-            2, // BORROW
-            venue.id
+
+        (bytes memory supplyCalldata, bytes memory borrowCalldata) = calldataGenerator.getBatchSupplyBorrow(
+            leverageData.supplyAsset, totalSupply, leverageData.borrowAsset, borrowAmount, address(this), venue.id
         );
+
+        // Step 3: Execute both operations
+        leverageData.supplyAsset.safeApprove(venue.router, totalSupply);
+        venue.router.callContract(supplyCalldata);
         venue.router.callContract(borrowCalldata);
 
-        // Step 4: Repay flash loan
-        flashAsset.safeApprove(address(flashAggregator), borrowAmount);
-
-        // Update position state
-        // position.totalSupplied = totalSupply;
-        // position.totalBorrowed = borrowAmount;
-        // position.status = PositionStatus.Active;
+        // Step 4: Transfer back to flash loan
+        flashAsset.safeTransfer(address(flashAggregator), borrowAmount);
     }
 
     function _executeDeleverage(bytes memory data, address flashAsset, uint256 flashAmount, uint256 premium) internal {
-        (DeleverageData memory deleverageData,) = abi.decode(data, (DeleverageData, LoopType));
+        DeleverageData memory deleverageData = abi.decode(data, (DeleverageData));
         // Position storage position = positions[deleverageData.positionId];
         VenueInfo memory venue = venues[deleverageData.venue];
 
         // Step 1: Repay all debt to protocol
         flashAsset.safeApprove(venue.router, deleverageData.repayAmount);
-        bytes memory repayCalldata = calldataGenerator.getCalldata(
+
+        (bytes memory repayCalldata, bytes memory withdrawCalldata) = calldataGenerator.getBatchRepayWithdraw(
             deleverageData.borrowAsset,
             deleverageData.repayAmount,
+            deleverageData.supplyAsset,
+            deleverageData.withdrawAmount,
             address(this),
-            3, // REPAY
             venue.id
         );
         venue.router.callContract(repayCalldata);
 
         // Step 2: Withdraw all collateral
-        bytes memory withdrawCalldata = calldataGenerator.getCalldata(
-            deleverageData.supplyAsset,
-            deleverageData.withdrawAmount,
-            address(this),
-            1, // WITHDRAW
-            venue.id
-        );
         venue.router.callContract(withdrawCalldata);
 
         // Step 3: Swap supply asset to borrow asset to repay flash loan
@@ -199,7 +178,7 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     }
 
     function _executeRebalance(bytes memory data, address flashAsset, uint256 flashAmount, uint256 premium) internal {
-        (RebalanceData memory rebalanceData,) = abi.decode(data, (RebalanceData, LoopType));
+        RebalanceData memory rebalanceData = abi.decode(data, (RebalanceData));
         // Position storage position = positions[rebalanceData.positionId];
 
         VenueInfo memory fromVenue = venues[rebalanceData.fromVenue];
@@ -207,53 +186,39 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
 
         // Step 1: Repay debt on source venue
         flashAsset.safeApprove(fromVenue.router, rebalanceData.moveBorrowAmount);
-        bytes memory repayCalldata = calldataGenerator.getCalldata(
+
+        (bytes memory repayCalldata, bytes memory withdrawCalldata) = calldataGenerator.getBatchRepayWithdraw(
             rebalanceData.borrowAsset,
             rebalanceData.moveBorrowAmount,
+            rebalanceData.supplyAsset,
+            rebalanceData.moveSupplyAmount,
             address(this),
-            3, // REPAY
             fromVenue.id
         );
         fromVenue.router.callContract(repayCalldata);
 
         // Step 2: Withdraw collateral from source venue
-        bytes memory withdrawCalldata = calldataGenerator.getCalldata(
-            rebalanceData.supplyAsset,
-            rebalanceData.moveSupplyAmount,
-            address(this),
-            1, // WITHDRAW
-            fromVenue.id
-        );
         fromVenue.router.callContract(withdrawCalldata);
 
         // Step 3: Supply to target venue
         rebalanceData.supplyAsset.safeApprove(toVenue.router, rebalanceData.moveSupplyAmount);
-        bytes memory supplyCalldata = calldataGenerator.getCalldata(
-            rebalanceData.supplyAsset,
-            rebalanceData.moveSupplyAmount,
-            address(this),
-            0, // SUPPLY
-            toVenue.id
-        );
-        toVenue.router.callContract(supplyCalldata);
 
         // Step 4: Borrow from target venue to repay flash loan
         uint256 borrowAmount = flashAmount + premium;
-        bytes memory borrowCalldata = calldataGenerator.getCalldata(
+
+        (bytes memory supplyCalldata, bytes memory borrowCalldata) = calldataGenerator.getBatchSupplyBorrow(
+            rebalanceData.supplyAsset,
+            rebalanceData.moveSupplyAmount,
             rebalanceData.borrowAsset,
             borrowAmount,
             address(this),
-            2, // BORROW
             toVenue.id
         );
+        toVenue.router.callContract(supplyCalldata);
         toVenue.router.callContract(borrowCalldata);
 
         // Step 5: Repay flash loan
-        flashAsset.safeApprove(address(flashAggregator), borrowAmount);
-
-        // Update position state
-        // position.currentVenue = rebalanceData.toVenue;
-        // position.status = PositionStatus.Active;
+        flashAsset.safeTransfer(address(flashAggregator), borrowAmount);
     }
 
     function toArray(address item) internal pure returns (address[] memory) {

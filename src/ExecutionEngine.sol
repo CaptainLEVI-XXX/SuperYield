@@ -51,7 +51,7 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
 
     error OperationLocked();
 
-    event PositionOpened(uint256 indexed positionId, address vault, bytes32 venue, uint256 leverage);
+    event PositionOpened(uint256 indexed positionId, address vault, bytes32 venue);
     event PositionClosed(uint256 indexed positionId, uint256 finalAmount);
     event PositionRebalanced(uint256 indexed positionId, bytes32 from, bytes32 to);
     event ReservesUpdated(address asset, uint256 amount);
@@ -73,12 +73,6 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
         Lock.unlock();
     }
 
-    // constructor(address _flashAggregator, address _calldataGenerator, address _preLiquidationManager, address _owner) {
-    //     initialize(_flashAggregator, _calldataGenerator);
-    //     preLiquidationManager = _preLiquidationManager;
-    //     _setAdmin(_owner);
-    // }
-
     function initialize(
         address _flashAggregator,
         address _calldataGenerator,
@@ -96,7 +90,7 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
         address supplyAsset,
         address borrowAsset,
         uint256 supplyAmount,
-        uint256 lvg, // 2e18 = 2x, 3e18 = 3x, etc
+        uint256 flashLoanAmount,
         bytes32 venue,
         uint256 targetLTV,
         uint16 routeForFlashLoan,
@@ -109,10 +103,6 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
 
         vaultPositions[vault].push(positionId);
 
-        // Calculate flash loan amount: (leverage - 1) * initial supply
-        // For 3x leverage with 100 USDC: flash loan 200 USDC
-        uint256 flashLoanAmount = (supplyAmount * (lvg - 1e18)) / 1e18;
-
         LeverageData memory leverageData = LeverageData({
             supplyAsset: supplyAsset,
             borrowAsset: borrowAsset,
@@ -122,7 +112,7 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
             swapCalldata: swapData
         });
 
-        // supplyAsset.safeTransferFrom(vault, address(this), supplyAmount);
+        supplyAsset.safeTransferFrom(vault, address(this), supplyAmount);
 
         leverage(leverageData, routeForFlashLoan);
 
@@ -137,7 +127,7 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
             status: PositionStatus.Active
         });
 
-        emit PositionOpened(positionId, vault, venue, lvg);
+        emit PositionOpened(positionId, vault, venue);
     }
 
     function closePosition(uint256 positionId, DexSwapCalldata calldata swapData, uint16 routeForFlashLoan)
@@ -247,8 +237,8 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
         return (repayAmount, seizeAmount);
     }
 
-    function registerVenue(bytes32 venueId, address router, uint8 identifier) public virtual override onlyAdmin {
-        super.registerVenue(venueId, router, identifier);
+    function registerVenue(address router, uint8 identifier) public virtual override onlyAdmin {
+        super.registerVenue(router, identifier);
     }
 
     function registerVault(address vault) external onlyAdmin {

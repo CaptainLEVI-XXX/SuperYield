@@ -11,10 +11,13 @@ import {IUniversalLendingWrapper} from "./interfaces/IUniversalLendingWrapper.so
 import {Rebalancer} from "./abstract/Rebalancer.sol";
 import {Venue} from "./abstract/Venue.sol";
 import {Lock} from "./libraries/Lock.sol";
+import {Initializable} from "@solady/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@solady/utils/UUPSUpgradeable.sol";
 
-contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
+contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializable, UUPSUpgradeable {
     using SafeTransferLib for address;
     using LibCall for address;
+    using CustomRevert for bytes4;
 
     enum PositionStatus {
         Inactive,
@@ -38,7 +41,6 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
     mapping(uint256 => Position) public positions;
     //vault positions
     mapping(address => uint256[]) public vaultPositions;
-   
 
     address public preLiquidationManager;
 
@@ -46,6 +48,8 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
 
     mapping(address => bool) public vaults;
     mapping(address => mapping(address => uint256)) public vaultReserves; // vault => asset => amount
+
+    error OperationLocked();
 
     event PositionOpened(uint256 indexed positionId, address vault, bytes32 venue, uint256 leverage);
     event PositionClosed(uint256 indexed positionId, uint256 finalAmount);
@@ -63,12 +67,25 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
     }
 
     modifier lockUnlock() {
-        Lock._lockUnlock();
+        if (Lock.isUnlocked()) OperationLocked.selector.revertWith();
+        Lock.lock();
         _;
+        Lock.unlock();
     }
 
-    constructor(address _flashAggregator, address _calldataGenerator, address _preLiquidationManager, address _owner) {
-        initialize(_flashAggregator, _calldataGenerator);
+    // constructor(address _flashAggregator, address _calldataGenerator, address _preLiquidationManager, address _owner) {
+    //     initialize(_flashAggregator, _calldataGenerator);
+    //     preLiquidationManager = _preLiquidationManager;
+    //     _setAdmin(_owner);
+    // }
+
+    function initialize(
+        address _flashAggregator,
+        address _calldataGenerator,
+        address _preLiquidationManager,
+        address _owner
+    ) external initializer {
+        _initializeRebalancer(_flashAggregator, _calldataGenerator);
         preLiquidationManager = _preLiquidationManager;
         _setAdmin(_owner);
     }
@@ -88,9 +105,8 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
         require(venues[venue].active, "Venue not active");
         require(vaults[vault], "Vault not registered");
 
-
         positionId = ++nextPositionId;
-    
+
         vaultPositions[vault].push(positionId);
 
         // Calculate flash loan amount: (leverage - 1) * initial supply
@@ -110,7 +126,7 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
 
         leverage(leverageData, routeForFlashLoan);
 
-          positions[positionId] = Position({
+        positions[positionId] = Position({
             vault: vault,
             supplyAsset: supplyAsset,
             borrowAsset: borrowAsset,
@@ -121,10 +137,8 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
             status: PositionStatus.Active
         });
 
-
         emit PositionOpened(positionId, vault, venue, lvg);
     }
-
 
     function closePosition(uint256 positionId, DexSwapCalldata calldata swapData, uint16 routeForFlashLoan)
         external
@@ -142,7 +156,7 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
             swapCalldata: swapData
         });
 
-        deleverage(deleverageData,routeForFlashLoan);
+        deleverage(deleverageData, routeForFlashLoan);
 
         position.status = PositionStatus.Inactive;
         position.totalSupplied = 0;
@@ -173,7 +187,7 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
             borrowAsset: position.borrowAsset
         });
 
-        rebalance(rebalanceData,routeForFlashLoan);
+        rebalance(rebalanceData, routeForFlashLoan);
 
         position.currentVenue = toVenue;
         position.status = PositionStatus.Migrated;
@@ -233,19 +247,24 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
         return (repayAmount, seizeAmount);
     }
 
-    function registerVenue(bytes32 venueId, address router,uint8 identifier) public virtual override onlyAdmin {
-        super.registerVenue(venueId, router,identifier);
+    function registerVenue(bytes32 venueId, address router, uint8 identifier) public virtual override onlyAdmin {
+        super.registerVenue(venueId, router, identifier);
     }
 
     function registerVault(address vault) external onlyAdmin {
         vaults[vault] = true;
     }
 
-    function whitelistRoute(string memory name, address _router) public virtual override returns (bytes32){
+    function whitelistRoute(string memory name, address _router) public virtual override returns (bytes32) {
         return super.whitelistRoute(name, _router);
     }
 
-    function updateRouteStatus(bytes32[] calldata identifier, bool[] calldata status) public virtual override returns (bool){
+    function updateRouteStatus(bytes32[] calldata identifier, bool[] calldata status)
+        public
+        virtual
+        override
+        returns (bool)
+    {
         return super.updateRouteStatus(identifier, status);
     }
 
@@ -271,11 +290,13 @@ contract StrategyManager is DexHelper,Venue,Admin2Step,Rebalancer {
         return address(0); // Placeholder
     }
 
-
-
     // function initialize(address owner) public initializer {
     //     _setAdmin(owner);
     // }
 
-    // function _authorizeUpgrade(address) internal override onlyAdmin {}
+    function getDeployedValue(address vault) external view returns (uint256) {
+        return vaultReserves[vault][getVaultSupplyAsset(vault)];
+    }
+
+    function _authorizeUpgrade(address) internal override onlyAdmin {}
 }

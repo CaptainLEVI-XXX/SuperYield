@@ -5,4 +5,9 @@ libs = ["lib"]
 evm_version = "cancun"
 via_ir = true
 
+
+[lint]
+level = "off"
+unsafe_typecast = "allow"
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -11,8 +11,14 @@ abstract contract Venue {
 
     mapping(bytes32 => VenueInfo) public venues;
 
-    function registerVenue(bytes32 venueId, address router, uint8 identifier) public virtual {
-        venues[venueId] = VenueInfo({router: router, active: true, id: identifier});
+    function registerVenue(address router, uint8 identifier) public virtual {
+        bytes32 identifier_ = keccak256(abi.encodePacked(router));
+        venues[identifier_] = VenueInfo({router: router, active: true, id: identifier});
+    }
+
+    function getVenueInfo(address router) public view returns (VenueInfo memory) {
+        bytes32 identifier_ = keccak256(abi.encodePacked(router));
+        return venues[identifier_];
     }
 
     function setVenueStatus(bytes32 venueId, bool status) external virtual {

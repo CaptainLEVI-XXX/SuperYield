@@ -8,7 +8,7 @@ import {Venue} from "../abstract/Venue.sol";
 import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 import {LibCall} from "@solady/utils/LibCall.sol";
 
-contract Rebalancer is DexHelper,Venue, IInstaFlashReceiverInterface {
+contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     using SafeTransferLib for address;
     using LibCall for address;
 
@@ -49,39 +49,36 @@ contract Rebalancer is DexHelper,Venue, IInstaFlashReceiverInterface {
     IInstaFlashAggregatorInterface public flashAggregator;
     IUniversalLendingWrapper public calldataGenerator;
 
-
-    function initialize(address _flashAggregator, address _calldataGenerator) internal {
+    function _initializeRebalancer(address _flashAggregator, address _calldataGenerator) internal {
         flashAggregator = IInstaFlashAggregatorInterface(_flashAggregator);
         calldataGenerator = IUniversalLendingWrapper(_calldataGenerator);
     }
 
-
-    function leverage(LeverageData memory leverageData,uint16 routeForFlashLoan) internal {
-
+    function leverage(LeverageData memory leverageData, uint16 routeForFlashLoan) internal {
         bytes memory data = abi.encode(leverageData, LoopType.Leverage);
 
         // Execute flash loan for leverage
-        flashAggregator.flashLoan(toArray(leverageData.borrowAsset), toArray(leverageData.flashLoanAmount), routeForFlashLoan, data, "");
-        
+        flashAggregator.flashLoan(
+            toArray(leverageData.borrowAsset), toArray(leverageData.flashLoanAmount), routeForFlashLoan, data, ""
+        );
     }
 
-
-    function deleverage(DeleverageData memory deleverageData,uint16 routeForFlashLoan) internal {
-
+    function deleverage(DeleverageData memory deleverageData, uint16 routeForFlashLoan) internal {
         bytes memory data = abi.encode(deleverageData, LoopType.Deleverage);
 
         // Execute flash loan for deleverage
-        flashAggregator.flashLoan(toArray(deleverageData.borrowAsset), toArray(deleverageData.repayAmount), routeForFlashLoan, data, "");
-        
+        flashAggregator.flashLoan(
+            toArray(deleverageData.borrowAsset), toArray(deleverageData.repayAmount), routeForFlashLoan, data, ""
+        );
     }
 
-    function rebalance(RebalanceData memory rebalanceData,uint16 routeForFlashLoan) internal {
-
+    function rebalance(RebalanceData memory rebalanceData, uint16 routeForFlashLoan) internal {
         bytes memory data = abi.encode(rebalanceData, LoopType.Rebalance);
 
         // Execute flash loan for rebalance
-        flashAggregator.flashLoan(toArray(rebalanceData.borrowAsset), toArray(rebalanceData.moveBorrowAmount), routeForFlashLoan, data, "");
-        
+        flashAggregator.flashLoan(
+            toArray(rebalanceData.borrowAsset), toArray(rebalanceData.moveBorrowAmount), routeForFlashLoan, data, ""
+        );
     }
 
     function executeOperation(
@@ -258,7 +255,6 @@ contract Rebalancer is DexHelper,Venue, IInstaFlashReceiverInterface {
         // position.currentVenue = rebalanceData.toVenue;
         // position.status = PositionStatus.Active;
     }
-
 
     function toArray(address item) internal pure returns (address[] memory) {
         address[] memory array = new address[](1);

@@ -14,6 +14,7 @@ import {StrategyManager} from "../src/ExecutionEngine.sol";
 import {PreLiquidationManager} from "../src/PreLiquidation.sol";
 import {IUniswapV3Router} from "../src/interfaces/IUniswapV3Router.sol";
 import {DexHelper} from "../src/abstract/DexHelper.sol";
+import {AaveV3Adapter} from "../src/adapter/AaveV3.sol";
 
 abstract contract BaseTest is Test, AddressInfo {
     using SafeTransferLib for address;
@@ -25,9 +26,7 @@ abstract contract BaseTest is Test, AddressInfo {
     EthVaultWrapper public ethWrapper;
     UniversalLendingWrapper public ulw;
     PreLiquidationManager public preLiquidationManager;
-    // AaveAdapter public aaveAdapter;
-    // CompoundAdapter public compoundAdapter;
-    // MorphoAdapter public morphoAdapter;
+    AaveV3Adapter public aaveAdapter;
 
     function setUp() public virtual {
         vm.createSelectFork(vm.envString("ETH_RPC_URL"), MAINNET_FORK_BLOCK);
@@ -35,20 +34,13 @@ abstract contract BaseTest is Test, AddressInfo {
         factory = new ERC1967Factory();
         // deploy Respective contract
         _deployExecutionEngine();
-        console.log("ExecutionEngine deployed");
         _deploySuperVault();
-        console.log("SuperVault deployed");
         _deployAssetWrapper();
-        console.log("AssetWrapper deployed");
         _deployEthWrapper();
-        console.log("EthWrapper deployed");
         _deployUniversalLendingWrapper();
-        console.log("UniversalLendingWrapper deployed");
         _deployPreLiquidationManager();
         // build the initialization data for the protocol
         _setUpInitializationData();
-
-        console.log("initialization done");
 
         _dealBobAndAlice();
 
@@ -65,8 +57,6 @@ abstract contract BaseTest is Test, AddressInfo {
         USDC.safeApprove(address(assetWrapper), type(uint256).max);
         WETH.safeApprove(address(assetWrapper), type(uint256).max);
         vm.stopPrank();
-
-        console.log("Approve done");
     }
 
     function _deploySuperVault() internal {
@@ -99,17 +89,9 @@ abstract contract BaseTest is Test, AddressInfo {
         preLiquidationManager = PreLiquidationManager(proxy);
     }
 
-    // function deployAaveAdapter() internal {
-    //     AaveAdapter aaveAdapter = new AaveAdapter();
-    // }
-
-    // function deployMorphoAdapter() internal {
-    //     MorphoAdapter morphoAdapter = new MorphoAdapter();
-    // }
-
-    // function deployCompoundAdapter() internal {
-    //     CompoundAdapter compoundAdapter = new CompoundAdapter();
-    // }
+    function deployAaveAdapter() internal {
+        aaveAdapter = new AaveV3Adapter(AAVE_DATA_PROVIDER, address(0)); //replace it by oracle address);
+    }
 
     function _setUpInitializationData() internal {
         // Execution Engine
@@ -118,6 +100,10 @@ abstract contract BaseTest is Test, AddressInfo {
         strategyManager.registerVault(address(superVault));
 
         strategyManager.whitelistRoute("UniswapV3", UniswapV3);
+
+        strategyManager.registerVenue(AAVE_V3_POOL, 0);
+        strategyManager.registerVenue(COMPOUND_V3_USDC, 2);
+        strategyManager.registerVenue(MORPHO_AAVE, 4);
 
         //aseetWrapper
         assetWrapper.whitelistRoute("UniswapV3", UniswapV3);
@@ -155,10 +141,10 @@ abstract contract BaseTest is Test, AddressInfo {
     }
 
     function _dealBobAndAlice() internal {
-        deal(USDC, alice, 100_00e6);
-        deal(WETH, alice, 100_00e18);
-        deal(USDC, bob, 100_00e6);
-        deal(WETH, bob, 100_00e18);
+        deal(USDC, alice, LARGE_AMOUNT_USDC + SMALL_AMOUNT_USDC);
+        deal(WETH, alice, LARGE_AMOUNT_WETH + SMALL_AMOUNT_WETH);
+        deal(USDC, bob, LARGE_AMOUNT_USDC + SMALL_AMOUNT_USDC);
+        deal(WETH, bob, LARGE_AMOUNT_WETH + SMALL_AMOUNT_WETH);
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
     }

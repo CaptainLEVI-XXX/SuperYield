@@ -12,25 +12,24 @@ contract DepositTest is BaseTest {
     using SafeTransferLib for address;
 
     function testDepositShareValueIncrease() public {
-        uint256 amount = 10e6;
         uint256 randomValue = 5e6;
 
         vm.prank(alice);
-        superVault.deposit(amount, alice);
+        superVault.deposit(SMALL_AMOUNT_USDC, alice);
 
-        assertEq(superVault.totalAssets(), amount);
-        assertEq(superVault.balanceOf(alice), amount);
+        assertEq(superVault.totalAssets(), SMALL_AMOUNT_USDC);
+        assertEq(superVault.balanceOf(alice), SMALL_AMOUNT_USDC);
 
         vm.prank(bob);
-        superVault.deposit(amount, bob);
+        superVault.deposit(SMALL_AMOUNT_USDC, bob);
 
-        assertEq(superVault.totalAssets(), amount + amount);
-        assertEq(superVault.balanceOf(bob), amount);
+        assertEq(superVault.totalAssets(), SMALL_AMOUNT_USDC + SMALL_AMOUNT_USDC);
+        assertEq(superVault.balanceOf(bob), SMALL_AMOUNT_USDC);
 
         deal(USDC, address(this), randomValue);
         USDC.safeTransfer(address(superVault), randomValue);
 
-        assertEq(superVault.totalAssets(), amount + amount + randomValue);
+        assertEq(superVault.totalAssets(), SMALL_AMOUNT_USDC + SMALL_AMOUNT_USDC + randomValue);
 
         vm.prank(alice);
         uint256 shares = superVault.deposit(randomValue, alice);
@@ -38,10 +37,9 @@ contract DepositTest is BaseTest {
     }
 
     function testDepositGasInfo() public {
-        uint256 amount = 10e6;
         uint256 gasBefore = gasleft();
         vm.prank(alice);
-        superVault.deposit(amount, alice);
+        superVault.deposit(SMALL_AMOUNT_USDC, alice);
         uint256 gasAfter = gasleft();
         console.log("Gas used: ", gasBefore - gasAfter);
 
@@ -49,12 +47,11 @@ contract DepositTest is BaseTest {
     }
 
     function testDepositWithAssetWrapper() public {
-        uint256 amount = 10e18;
-        DexHelper.DexSwapCalldata memory data = _buildSwapParams(WETH, USDC, amount, address(assetWrapper));
+        DexHelper.DexSwapCalldata memory data = _buildSwapParams(WETH, USDC, SMALL_AMOUNT_WETH, address(assetWrapper));
 
         uint256 gasBefore = gasleft();
         vm.prank(alice);
-        assetWrapper.deposit(data, alice, amount);
+        assetWrapper.deposit(data, alice, SMALL_AMOUNT_WETH);
         uint256 gasAfter = gasleft();
         console.log("Gas used: ", gasBefore - gasAfter);
         // SuperYield - 351380
@@ -64,12 +61,11 @@ contract DepositTest is BaseTest {
     }
 
     function testDepositWithEthWrapper() public {
-        uint256 amount = 10e18;
-        DexHelper.DexSwapCalldata memory data = _buildSwapParams(WETH, USDC, amount, address(ethWrapper));
+        DexHelper.DexSwapCalldata memory data = _buildSwapParams(WETH, USDC, SMALL_AMOUNT_WETH, address(ethWrapper));
 
         uint256 gasBefore = gasleft();
         vm.prank(alice);
-        ethWrapper.deposit{value: amount}(data, alice);
+        ethWrapper.deposit{value: SMALL_AMOUNT_WETH}(data, alice);
         uint256 gasAfter = gasleft();
         console.log("Gas used: ", gasBefore - gasAfter);
         // SuperYield - 352357
@@ -79,38 +75,34 @@ contract DepositTest is BaseTest {
     }
 
     function testWithdraw() public {
-        uint256 amount = 10e6;
-
         vm.prank(alice);
-        superVault.deposit(amount, alice);
+        superVault.deposit(SMALL_AMOUNT_USDC, alice);
 
         uint256 gasBefore = gasleft();
         vm.prank(alice);
-        superVault.withdraw(amount / 2, alice, alice);
+        superVault.withdraw(SMALL_AMOUNT_USDC / 2, alice, alice);
         uint256 gasAfter = gasleft();
 
-        assertEq(superVault.totalAssets(), amount / 2);
-        assertEq(superVault.balanceOf(alice), amount / 2);
+        assertEq(superVault.totalAssets(), SMALL_AMOUNT_USDC / 2);
+        assertEq(superVault.balanceOf(alice), SMALL_AMOUNT_USDC / 2);
 
         console.log("Gas used: ", gasBefore - gasAfter); //27545
     }
 
     function testWithdrawWithAssetWrapper() public {
-        uint256 amount = 5000e6;
-
         vm.prank(alice);
-        superVault.deposit(amount, alice);
+        superVault.deposit(LARGE_AMOUNT_USDC, alice);
 
         uint256 wethBalanceBefore = WETH.balanceOf(alice);
 
-        DexHelper.DexSwapCalldata memory data = _buildSwapParams(USDC, WETH, amount, address(assetWrapper));
+        DexHelper.DexSwapCalldata memory data = _buildSwapParams(USDC, WETH, LARGE_AMOUNT_USDC, address(assetWrapper));
 
         vm.prank(alice);
-        superVault.approve(address(assetWrapper), amount);
+        superVault.approve(address(assetWrapper), LARGE_AMOUNT_USDC);
 
         uint256 gasBefore = gasleft();
         vm.prank(alice);
-        assetWrapper.withdraw(data, amount, alice);
+        assetWrapper.withdraw(data, LARGE_AMOUNT_USDC, alice);
         uint256 gasAfter = gasleft();
 
         //197214
@@ -126,19 +118,17 @@ contract DepositTest is BaseTest {
     }
 
     function testWithdrawWithEthWrapper() public {
-        uint256 amount = 5000e6;
+        vm.prank(alice);
+        superVault.deposit(LARGE_AMOUNT_USDC, alice);
+
+        DexHelper.DexSwapCalldata memory data = _buildSwapParams(USDC, WETH, LARGE_AMOUNT_USDC, address(ethWrapper));
 
         vm.prank(alice);
-        superVault.deposit(amount, alice);
-
-        DexHelper.DexSwapCalldata memory data = _buildSwapParams(USDC, WETH, amount, address(ethWrapper));
-
-        vm.prank(alice);
-        superVault.approve(address(ethWrapper), amount);
+        superVault.approve(address(ethWrapper), LARGE_AMOUNT_USDC);
 
         uint256 gasBefore = gasleft();
         vm.prank(alice);
-        ethWrapper.withdraw(data, amount, alice);
+        ethWrapper.withdraw(data, LARGE_AMOUNT_USDC, alice);
         uint256 gasAfter = gasleft();
 
         //197214

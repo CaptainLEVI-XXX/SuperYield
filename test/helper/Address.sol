@@ -28,4 +28,12 @@ abstract contract AddressInfo {
     address bob = address(0x89334);
 
     address admin = address(0x23e3e233);
+
+    uint256 LARGE_AMOUNT_WETH = 1000_000e18;
+    uint256 LARGE_AMOUNT_USDC = 1000_000e6;
+
+    uint256 SMALL_AMOUNT_WETH = 10e18;
+    uint256 SMALL_AMOUNT_USDC = 10e6;
+
+    uint256 FOUR_THOUSAND_DOLLAR = 4_000e6;
 }

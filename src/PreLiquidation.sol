@@ -1,0 +1,586 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {WadMath} from "./libraries/WadMath.sol";
+import {Lock} from "./libraries/Lock.sol";
+import {Admin2Step} from "./abstract/Admin2Step.sol";
+import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
+import {IStrategyManager} from "./interfaces/IExecutionEngine.sol";
+import {IInstaFlashAggregatorInterface, IInstaFlashReceiverInterface} from "./interfaces/IInstaDappFlashLoan.sol";
+import {PreLiquidationCore} from "./abstract/PreLiquidationCore.sol";
+import {Initializable} from "@solady/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@solady/utils/UUPSUpgradeable.sol";
+
+/// @title Pre-Liquidation Manager with Flash Loan Support
+/// @notice Manages pre-liquidations for leveraged positions to prevent full liquidations
+/// @dev This contract allows keepers to perform pre-liquidations either with their own capital
+///      or using flash loans. Pre-liquidations help maintain healthy loan-to-value ratios
+///      and prevent positions from entering full liquidation zones.
+/// @author Your Protocol Team
+contract PreLiquidationManager is
+    Admin2Step,
+    IInstaFlashReceiverInterface,
+    PreLiquidationCore,
+    Initializable,
+    UUPSUpgradeable
+{
+    using SafeTransferLib for address;
+    using WadMath for uint256;
+
+    // ======================== IMMUTABLE VARIABLES ========================
+
+    /// @notice InstaDapp flash loan aggregator interface
+    /// @dev Used for executing flash loan operations when keepers don't provide capital
+    IInstaFlashAggregatorInterface public flashAggregator;
+
+    /// @notice Strategy manager contract that handles position management
+    /// @dev All liquidation operations are executed through this contract
+    IStrategyManager public strategyManager;
+
+    // ======================== STRUCTS ========================
+
+    /// @notice Configuration parameters for a specific market
+    /// @dev Contains all necessary parameters to manage pre-liquidations for a market
+    /// @param protocolId Unique identifier for the lending protocol
+    /// @param marketId Unique identifier for the specific market within the protocol
+    /// @param adapter Protocol adapter contract for interacting with the lending protocol
+    /// @param params Pre-liquidation parameters including thresholds and incentives
+    /// @param targetLtv Target loan-to-value ratio after pre-liquidation
+    /// @param maxRepayPct Maximum percentage of debt that can be repaid in one transaction
+    /// @param cooldown Minimum time between pre-liquidation actions for this market
+    /// @param lastAction Timestamp of the last pre-liquidation action
+    /// @param enabled Whether pre-liquidations are enabled for this market
+    /// @param flashLoanEnabled Whether flash loan pre-liquidations are allowed
+    struct MarketConfig {
+        bytes32 protocolId;
+        bytes32 marketId;
+        IProtocolAdapter adapter;
+        PreLiquidationParams params;
+        uint256 targetLtv;
+        uint256 maxRepayPct;
+        uint256 cooldown;
+        uint48 lastAction;
+        bool enabled;
+        bool flashLoanEnabled;
+    }
+
+    // /// @notice Data structure for flash loan execution
+    // /// @dev Contains all necessary information for executing a flash loan pre-liquidation
+    // /// @param marketKey Unique key identifying the market configuration
+    // /// @param keeper Address of the keeper executing the pre-liquidation
+    // /// @param seizeAmount Amount of collateral to seize (in USD)
+    // /// @param collateralToken Address of the collateral token
+    // /// @param debtToken Address of the debt token to repay
+    struct FlashLoanData {
+        bytes32 marketKey;
+        address keeper;
+        uint256 seizeAmount;
+        address collateralToken;
+        address debtToken;
+        uint16 routeForFlashLoan;
+    }
+
+    // ======================== STATE VARIABLES ========================
+
+    /// @notice Mapping of market keys to their configurations
+    /// @dev Used to store and retrieve market-specific pre-liquidation settings
+    mapping(bytes32 => MarketConfig) public markets;
+
+    // ======================== EVENTS ========================
+
+    /// @notice Emitted when a pre-liquidation is successfully executed
+    /// @param marketKey Unique identifier for the market
+    /// @param keeper Address of the keeper who executed the pre-liquidation
+    /// @param ltvBefore Loan-to-value ratio before the pre-liquidation
+    /// @param ltvAfter Loan-to-value ratio after the pre-liquidation
+    /// @param repaidUsd Amount of debt repaid in USD
+    /// @param seizedUsd Amount of collateral seized in USD
+    /// @param profit Profit earned by the keeper in USD
+    event PreLiquidation(
+        bytes32 indexed marketKey,
+        address indexed keeper,
+        uint256 ltvBefore,
+        uint256 ltvAfter,
+        uint256 repaidUsd,
+        uint256 seizedUsd,
+        uint256 profit
+    );
+
+    /// @notice Emitted when a flash loan pre-liquidation is successfully executed
+    /// @param marketKey Unique identifier for the market
+    /// @param keeper Address of the keeper who executed the flash loan pre-liquidation
+    /// @param flashLoanAmount Amount borrowed via flash loan
+    /// @param profit Profit earned by the keeper
+    event FlashLiquidation(bytes32 indexed marketKey, address indexed keeper, uint256 flashLoanAmount, uint256 profit);
+
+    /// @notice Emitted when a market configuration is updated
+    /// @param marketKey Unique identifier for the market
+    /// @param protocolId Protocol identifier
+    /// @param flashLoanEnabled Whether flash loans are enabled for this market
+    event MarketConfigured(bytes32 indexed marketKey, bytes32 protocolId, bool flashLoanEnabled);
+
+    // ======================== ERRORS ========================
+
+    /// @notice Thrown when caller is not an authorized keeper
+    error NotAuthorized();
+
+    /// @notice Thrown when trying to operate on a disabled market
+    error MarketNotEnabled();
+
+    /// @notice Thrown when position is not in pre-liquidation zone
+    error NotInPreLiquidationZone();
+
+    /// @notice Thrown when cooldown period is still active
+    error CooldownActive();
+
+    /// @notice Thrown when amounts are too small to execute
+    error AmountTooSmall();
+
+    /// @notice Thrown when flash loan operation fails
+    error FlashLoanFailed();
+
+    /// @notice Thrown when flash loan callback is invalid or unauthorized
+    error InvalidFlashLoanCallback();
+
+    // ======================== CONSTRUCTOR ========================
+
+    // /// @notice Initializes the PreLiquidationManager contract
+    // /// @dev Sets the strategy manager and flash loan provider addresses
+    // /// @param _strategyManager Address of the strategy manager contract
+    // /// @param _flashLoanProvider Address of the flash loan provider contract
+    // constructor(address _strategyManager, address _flashLoanProvider) {
+    //     strategyManager = IStrategyManager(_strategyManager);
+    //     flashAggregator = IInstaFlashAggregatorInterface(_flashLoanProvider);
+    // }
+
+    function initialize(address _strategyManager, address _flashLoanProvider, address owner) public initializer {
+        strategyManager = IStrategyManager(_strategyManager);
+        flashAggregator = IInstaFlashAggregatorInterface(_flashLoanProvider);
+        _setAdmin(owner);
+    }
+
+    // ======================== ADMIN FUNCTIONS ========================
+
+    /// @notice Configures pre-liquidation parameters for a specific market
+    /// @dev Only callable by admin. Validates all parameters before setting configuration
+    /// @param marketKey Unique identifier for the market
+    /// @param protocolId Protocol identifier (e.g., Compound, Aave)
+    /// @param marketId Market identifier within the protocol
+    /// @param adapter Address of the protocol adapter contract
+    /// @param params Pre-liquidation parameters including LTV thresholds
+    /// @param targetLtv Target LTV ratio to achieve after pre-liquidation
+    /// @param maxRepayPct Maximum percentage of debt that can be repaid (in WAD format)
+    /// @param cooldown Cooldown period between pre-liquidation actions (in seconds)
+    /// @param enableFlashLoan Whether to enable flash loan pre-liquidations for this market
+    function configureMarket(
+        bytes32 marketKey,
+        bytes32 protocolId,
+        bytes32 marketId,
+        address adapter,
+        PreLiquidationParams calldata params,
+        uint256 targetLtv,
+        uint256 maxRepayPct,
+        uint256 cooldown,
+        bool enableFlashLoan
+    ) external onlyAdmin {
+        uint256 protocolLltv = IProtocolAdapter(adapter).lltv(marketId);
+
+        // Validate using core function
+        validateParams(params, protocolLltv);
+        ///@notice how come this is possible
+        require(targetLtv < params.preLltv, "Target >= preLltv");
+        require(maxRepayPct <= WadMath.WAD, "Max repay > 100%");
+
+        markets[marketKey] = MarketConfig({
+            protocolId: protocolId,
+            marketId: marketId,
+            adapter: IProtocolAdapter(adapter),
+            params: params,
+            targetLtv: targetLtv,
+            maxRepayPct: maxRepayPct,
+            cooldown: cooldown,
+            lastAction: 0,
+            enabled: true,
+            flashLoanEnabled: enableFlashLoan
+        });
+
+        emit MarketConfigured(marketKey, protocolId, enableFlashLoan);
+    }
+
+    // /// @notice Sets authorization status for a keeper
+    // /// @dev Only callable by admin
+    // /// @param keeper Address of the keeper
+    // /// @param authorized Whether the keeper should be authorized
+    // function setKeeper(address keeper, bool authorized) external onlyAdmin {
+    //     authorizedKeepers[keeper] = authorized;
+    // }
+
+    /// @notice Enables or disables pre-liquidations for a specific market
+    /// @dev Only callable by admin
+    /// @param marketKey Unique identifier for the market
+    /// @param enabled Whether pre-liquidations should be enabled
+    function setMarketEnabled(bytes32 marketKey, bool enabled) external onlyAdmin {
+        markets[marketKey].enabled = enabled;
+    }
+
+    // ======================== KEEPER FUNCTIONS ========================
+
+    /// @notice Execute pre-liquidation where keeper provides their own capital
+    /// @dev Keeper must have sufficient debt tokens and approve this contract to spend them
+    /// @param marketKey Unique identifier for the market
+    /// @param maxRepayUsd Maximum amount of debt to repay in USD (0 for optimal amount)
+    /// @param minSeizeUsd Minimum amount of collateral to seize in USD (slippage protection)
+    /// @return actualRepaidUsd Actual amount of debt repaid in USD
+    /// @return actualSeizedUsd Actual amount of collateral seized in USD
+    function preLiquidate(bytes32 marketKey, uint256 maxRepayUsd, uint256 minSeizeUsd)
+        external
+        returns (uint256 actualRepaidUsd, uint256 actualSeizedUsd)
+    {
+        MarketConfig storage config = markets[marketKey];
+
+        _validateMarket(config);
+
+        // Get position and calculate amounts
+        (LiquidationAmounts memory amounts, uint256 currentLtv, uint256 collateralUsd, uint256 debtUsd) =
+            _preparePreLiquidation(marketKey);
+
+        // Apply keeper limits
+        if (maxRepayUsd > 0 && amounts.repayAmount > maxRepayUsd) {
+            amounts.repayAmount = maxRepayUsd;
+            amounts.seizeAmount = amounts.repayAmount.wMul(amounts.lif);
+        }
+
+        if (minSeizeUsd > 0 && amounts.seizeAmount < minSeizeUsd) {
+            revert AmountTooSmall();
+        }
+
+        // Execute liquidation
+        (actualRepaidUsd, actualSeizedUsd) = _executeLiquidation(
+            config,
+            amounts,
+            msg.sender,
+            false // not a flash loan
+        );
+
+        // Update state and emit
+        _finalizeLiquidation(marketKey, config, currentLtv, actualRepaidUsd, actualSeizedUsd, msg.sender);
+    }
+
+    /// @notice Execute pre-liquidation using flash loan (keeper provides no upfront capital)
+    /// @dev Uses flash loan to borrow debt tokens, execute liquidation, and repay from proceeds
+    /// @param marketKey Unique identifier for the market
+    /// @param maxRepayUsd Maximum amount of debt to repay in USD (0 for optimal amount)
+    function preLiquidateWithFlashLoan(bytes32 marketKey, uint256 maxRepayUsd, uint16 routeForFlashLoan) external {
+        MarketConfig storage config = markets[marketKey];
+        _validateMarket(config);
+
+        if (!config.flashLoanEnabled) revert FlashLoanFailed();
+
+        // Get position and calculate amounts
+        (LiquidationAmounts memory amounts, uint256 currentLtv,,) = _preparePreLiquidation(marketKey);
+
+        if (maxRepayUsd > 0 && amounts.repayAmount > maxRepayUsd) {
+            amounts.repayAmount = maxRepayUsd;
+            amounts.seizeAmount = amounts.repayAmount.wMul(amounts.lif);
+        }
+
+        // Get tokens
+        (address collateralToken, address debtToken) = config.adapter.getTokens(config.marketId);
+
+        // Convert to token units for flash loan
+        uint256 repayUnits = config.adapter.usdToTokenUnits(debtToken, amounts.repayAmount);
+
+        // Prepare flash loan data
+        // FlashLoanData memory flashData = FlashLoanData({
+        //     marketKey: marketKey,
+        //     keeper: msg.sender,
+        //     seizeAmount: amounts.seizeAmount,
+        //     repayUnits: repayUnits,
+        //     collateralToken: collateralToken,
+        //     debtToken: debtToken,
+        //     routeForFlashLoan: routeForFlashLoan
+        // });
+
+        // // Execute flash loan
+        // flashAggregator.flashLoan(
+        //     toArray(debtToken),
+        //     toArray(repayUnits),
+        //     routeforFlashLoan
+        //     abi.encode(flashData)
+        // );
+
+        // flashLiquidate(flashData);
+
+        emit FlashLiquidation(
+            marketKey, msg.sender, repayUnits, calculateKeeperProfit(amounts.seizeAmount, amounts.repayAmount)
+        );
+    }
+
+    /// @notice Flash loan callback function called by flash loan provider
+    /// @dev Implements IInstaFlashReceiverInterface - executes liquidation and repays flash loan
+    /// @param assets Array of asset addresses that were borrowed
+    /// @param amounts Array of amounts that were borrowed
+    /// @param premiums Array of premium amounts to pay for the flash loan
+    /// @param initiator Address that initiated the flash loan (should be this contract)
+    /// @param params Encoded FlashLoanData containing liquidation parameters
+    /// @return success True if the operation was successful
+    function executeOperation(
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata premiums,
+        address initiator,
+        bytes calldata params
+    ) external returns (bool) {
+        if (msg.sender != address(flashAggregator)) revert InvalidFlashLoanCallback();
+        if (initiator != address(this)) revert InvalidFlashLoanCallback();
+
+        FlashLoanData memory flashData = abi.decode(params, (FlashLoanData));
+
+        MarketConfig storage config = markets[flashData.marketKey];
+
+        // Calculate amounts in USD
+        uint256 repayUsd = config.adapter.tokenUnitsToUsd(flashData.debtToken, amounts[0]);
+
+        LiquidationAmounts memory liquidationAmounts = LiquidationAmounts({
+            repayAmount: repayUsd,
+            seizeAmount: flashData.seizeAmount,
+            lif: 0, // Already calculated
+            lcf: 0 // Already calculated
+        });
+
+        // Execute the actual liquidation
+        (uint256 actualRepaidUsd, uint256 actualSeizedUsd) = _executeLiquidation(
+            config,
+            liquidationAmounts,
+            flashData.keeper,
+            true // is flash loan
+        );
+
+        // Convert seized collateral to debt token to repay flash loan
+        uint256 seizedUnits = config.adapter.usdToTokenUnits(flashData.collateralToken, actualSeizedUsd);
+
+        // Swap collateral to debt token if different
+        if (flashData.collateralToken != flashData.debtToken) {
+            _swapForRepayment(flashData.collateralToken, flashData.debtToken, seizedUnits, amounts[0] + premiums[0]);
+        }
+
+        // Approve flash loan repayment
+        uint256 totalRepay = amounts[0] + premiums[0];
+        flashData.debtToken.safeApprove(address(flashAggregator), totalRepay);
+
+        // Send profit to keeper
+        uint256 remaining = flashData.debtToken.balanceOf(address(this)) - totalRepay;
+        if (remaining > 0) {
+            flashData.debtToken.safeTransfer(flashData.keeper, remaining);
+            // keeperProfits[flashData.keeper] += remaining;
+        }
+
+        return true;
+    }
+
+    // ======================== VIEW FUNCTIONS ========================
+
+    /// @notice Check if a position is eligible for pre-liquidation and calculate expected returns
+    /// @dev Used by keepers to evaluate pre-liquidation opportunities
+    /// @param marketKey Unique identifier for the market
+    /// @return preLiquidatable Whether the position can be pre-liquidated
+    /// @return currentLtv Current loan-to-value ratio of the position
+    /// @return lif Liquidation incentive factor
+    /// @return lcf Liquidation close factor
+    /// @return optimalRepayUsd Optimal amount of debt to repay for maximum efficiency
+    /// @return expectedSeizeUsd Expected amount of collateral to seize
+    /// @return expectedProfit Expected profit for the keeper
+    function checkPosition(bytes32 marketKey)
+        external
+        view
+        returns (
+            bool preLiquidatable,
+            uint256 currentLtv,
+            uint256 lif,
+            uint256 lcf,
+            uint256 optimalRepayUsd,
+            uint256 expectedSeizeUsd,
+            uint256 expectedProfit
+        )
+    {
+        MarketConfig memory config = markets[marketKey];
+        if (!config.enabled) return (false, 0, 0, 0, 0, 0, 0);
+
+        try this.getPositionData(marketKey) returns (uint256 collateralUsd, uint256 debtUsd, uint256 protocolLltv) {
+            if (collateralUsd == 0 || debtUsd == 0) return (false, 0, 0, 0, 0, 0, 0);
+
+            currentLtv = debtUsd.wDiv(collateralUsd);
+
+            if (isPreLiquidatable(currentLtv, config.params.preLltv, protocolLltv)) {
+                preLiquidatable = true;
+
+                LiquidationAmounts memory amounts = calculateLiquidationAmounts(
+                    collateralUsd,
+                    debtUsd,
+                    currentLtv,
+                    config.targetLtv,
+                    protocolLltv,
+                    config.maxRepayPct,
+                    config.params
+                );
+
+                lif = amounts.lif;
+                lcf = amounts.lcf;
+                optimalRepayUsd = amounts.repayAmount;
+                expectedSeizeUsd = amounts.seizeAmount;
+                expectedProfit = calculateKeeperProfit(expectedSeizeUsd, optimalRepayUsd);
+            }
+        } catch {}
+    }
+
+    /// @notice Get current position data for a market
+    /// @dev External view function to retrieve position information
+    /// @param marketKey Unique identifier for the market
+    /// @return collateralUsd Current collateral value in USD
+    /// @return debtUsd Current debt value in USD
+    /// @return protocolLltv Protocol's liquidation loan-to-value ratio
+    function getPositionData(bytes32 marketKey)
+        external
+        view
+        returns (uint256 collateralUsd, uint256 debtUsd, uint256 protocolLltv)
+    {
+        MarketConfig memory config = markets[marketKey];
+        (collateralUsd, debtUsd) = config.adapter.getPositionUsd(config.marketId, address(strategyManager));
+        protocolLltv = config.adapter.lltv(config.marketId);
+    }
+
+    // ======================== INTERNAL FUNCTIONS ========================
+
+    /// @notice Prepares liquidation amounts and validates position eligibility
+    /// @dev Internal function that calculates optimal liquidation parameters
+    /// @param marketKey Unique identifier for the market
+    /// @return amounts Calculated liquidation amounts (repay, seize, factors)
+    /// @return currentLtv Current loan-to-value ratio of the position
+    /// @return collateralUsd Current collateral value in USD
+    /// @return debtUsd Current debt value in USD
+    function _preparePreLiquidation(bytes32 marketKey)
+        internal
+        view
+        returns (LiquidationAmounts memory amounts, uint256 currentLtv, uint256 collateralUsd, uint256 debtUsd)
+    {
+        MarketConfig memory config = markets[marketKey];
+
+        // Get current position
+        (collateralUsd, debtUsd) = config.adapter.getPositionUsd(config.marketId, address(strategyManager));
+
+        if (collateralUsd == 0 || debtUsd == 0) revert AmountTooSmall();
+
+        // Calculate LTV
+        currentLtv = debtUsd.wDiv(collateralUsd);
+        uint256 protocolLltv = config.adapter.lltv(config.marketId);
+
+        // Check if in pre-liquidation zone
+        if (!isPreLiquidatable(currentLtv, config.params.preLltv, protocolLltv)) {
+            revert NotInPreLiquidationZone();
+        }
+
+        // Calculate optimal amounts using core function
+        amounts = calculateLiquidationAmounts(
+            collateralUsd, debtUsd, currentLtv, config.targetLtv, protocolLltv, config.maxRepayPct, config.params
+        );
+    }
+
+    /// @notice Executes the actual liquidation through the strategy manager
+    /// @dev Internal function that handles token transfers and protocol interactions
+    /// @param config Market configuration parameters
+    /// @param amounts Calculated liquidation amounts
+    /// @param keeper Address of the keeper executing the liquidation
+    /// @param isFlashLoan Whether this is a flash loan liquidation
+    /// @return actualRepaidUsd Actual amount of debt repaid in USD
+    /// @return actualSeizedUsd Actual amount of collateral seized in USD
+    function _executeLiquidation(
+        MarketConfig memory config,
+        LiquidationAmounts memory amounts,
+        address keeper,
+        bool isFlashLoan
+    ) internal returns (uint256 actualRepaidUsd, uint256 actualSeizedUsd) {
+        // Get tokens
+        (address collateralToken, address debtToken) = config.adapter.getTokens(config.marketId);
+
+        // Convert to token units
+        uint256 repayUnits = config.adapter.usdToTokenUnits(debtToken, amounts.repayAmount);
+        uint256 seizeUnits = config.adapter.usdToTokenUnits(collateralToken, amounts.seizeAmount);
+
+        if (!isFlashLoan) {
+            // Transfer debt tokens from keeper
+            debtToken.safeTransferFrom(keeper, address(this), repayUnits);
+        }
+
+        // Approve strategy manager
+        debtToken.safeApprove(address(strategyManager), repayUnits);
+
+        // Execute through strategy manager
+        (uint256 actualRepaid, uint256 actualSeized) = strategyManager.executePreLiquidation(
+            config.protocolId,
+            config.marketId,
+            debtToken,
+            collateralToken,
+            repayUnits,
+            seizeUnits,
+            isFlashLoan ? address(this) : keeper
+        );
+
+        // Convert back to USD
+        actualRepaidUsd = config.adapter.tokenUnitsToUsd(debtToken, actualRepaid);
+        actualSeizedUsd = config.adapter.tokenUnitsToUsd(collateralToken, actualSeized);
+    }
+
+    /// @notice Validates market configuration and timing constraints
+    /// @dev Internal function to ensure market is operational and cooldown is respected
+    /// @param config Market configuration to validate
+    function _validateMarket(MarketConfig memory config) internal view {
+        if (!config.enabled) revert MarketNotEnabled();
+        if (block.timestamp < config.lastAction + config.cooldown) {
+            revert CooldownActive();
+        }
+    }
+
+    /// @notice Finalizes liquidation by updating state and emitting events
+    /// @dev Internal function that handles post-liquidation bookkeeping
+    /// @param marketKey Unique identifier for the market
+    /// @param config Market configuration (storage reference for updates)
+    /// @param ltvBefore LTV ratio before liquidation
+    /// @param actualRepaidUsd Actual amount repaid in USD
+    /// @param actualSeizedUsd Actual amount seized in USD
+    /// @param keeper Address of the keeper who executed the liquidation
+    function _finalizeLiquidation(
+        bytes32 marketKey,
+        MarketConfig storage config,
+        uint256 ltvBefore,
+        uint256 actualRepaidUsd,
+        uint256 actualSeizedUsd,
+        address keeper
+    ) internal {
+        config.lastAction = uint48(block.timestamp);
+
+        // Calculate new LTV
+        (uint256 newCollateralUsd, uint256 newDebtUsd) =
+            config.adapter.getPositionUsd(config.marketId, address(strategyManager));
+        uint256 ltvAfter = newDebtUsd > 0 ? newDebtUsd.wDiv(newCollateralUsd) : 0;
+
+        // Calculate and track profit
+        uint256 profit = calculateKeeperProfit(actualSeizedUsd, actualRepaidUsd);
+        // keeperProfits[keeper] += profit;
+
+        emit PreLiquidation(marketKey, keeper, ltvBefore, ltvAfter, actualRepaidUsd, actualSeizedUsd, profit);
+    }
+
+    /// @notice Swaps seized collateral tokens for debt tokens to repay flash loan
+    /// @dev Internal function that integrates with DEX for token swapping
+    /// @param tokenIn Address of the input token (collateral)
+    /// @param tokenOut Address of the output token (debt token)
+    /// @param amountIn Amount of input tokens to swap
+    /// @param minAmountOut Minimum amount of output tokens expected (slippage protection)
+    function _swapForRepayment(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut) internal {
+        // Implement swap logic (DEX integration)
+        // This is a placeholder - integrate with your DEX helper
+    }
+
+    function _authorizeUpgrade(address) internal override onlyAdmin {}
+}

@@ -21,8 +21,8 @@ contract UniversalLendingWrapperTest is Test, AddressInfo {
         wrapper = new UniversalLendingWrapper();
 
         // Setup test account
-        vm.startPrank(user);
-        vm.deal(user, 100 ether);
+        vm.startPrank(alice);
+        vm.deal(alice, 100 ether);
     }
 
     function testAaveV3Operations() public {
@@ -33,7 +33,7 @@ contract UniversalLendingWrapperTest is Test, AddressInfo {
         require(success, "WETH wrap failed");
 
         // Test supply
-        bytes memory supplyData = wrapper.getCalldata(WETH, 1 ether, user, wrapper.SUPPLY(), wrapper.AAVE_V3());
+        bytes memory supplyData = wrapper.getCalldata(WETH, 1 ether, alice, wrapper.SUPPLY(), wrapper.AAVE_V3());
 
         // Execute supply
         WETH.safeApprove(AAVE_V3_POOL, 1 ether);
@@ -41,7 +41,7 @@ contract UniversalLendingWrapperTest is Test, AddressInfo {
         console.log("Supply executed");
 
         // Test borrow
-        bytes memory borrowData = wrapper.getCalldata(USDC, 100 * 1e6, user, wrapper.BORROW(), wrapper.AAVE_V3());
+        bytes memory borrowData = wrapper.getCalldata(USDC, 100 * 1e6, alice, wrapper.BORROW(), wrapper.AAVE_V3());
 
         assertEq(borrowData.length, 164, "Borrow calldata length incorrect");
         AAVE_V3_POOL.callContract(borrowData);
@@ -49,13 +49,13 @@ contract UniversalLendingWrapperTest is Test, AddressInfo {
 
         // Test repay
         USDC.safeApprove(AAVE_V3_POOL, 100 * 1e6);
-        bytes memory repayData = wrapper.getCalldata(USDC, 100 * 1e6, user, wrapper.REPAY(), wrapper.AAVE_V3());
+        bytes memory repayData = wrapper.getCalldata(USDC, 100 * 1e6, alice, wrapper.REPAY(), wrapper.AAVE_V3());
 
         AAVE_V3_POOL.callContract(repayData);
         console.log("Repay executed");
 
         // Test withdraw
-        bytes memory withdrawData = wrapper.getCalldata(WETH, 0.5 ether, user, wrapper.WITHDRAW(), wrapper.AAVE_V3());
+        bytes memory withdrawData = wrapper.getCalldata(WETH, 0.5 ether, alice, wrapper.WITHDRAW(), wrapper.AAVE_V3());
 
         AAVE_V3_POOL.callContract(withdrawData);
         console.log("Withdraw executed");
@@ -65,20 +65,29 @@ contract UniversalLendingWrapperTest is Test, AddressInfo {
         console.log("Testing Compound V3...");
 
         // Get some USDC from whale
-        deal(USDC, user, 10000 * 1e6);
+        deal(USDC, alice, 10000 * 1e6);
 
         // Test supply
-        bytes memory supplyData = wrapper.getCalldata(USDC, 1000 * 1e6, user, wrapper.SUPPLY(), wrapper.COMPOUND_V3());
+        bytes memory supplyData = wrapper.getCalldata(USDC, 1000 * 1e6, alice, wrapper.SUPPLY(), wrapper.COMPOUND_V3());
+
+        assertEq(supplyData.length, 68, "Supply calldata length incorrect");
+        bytes4 selector;
+        assembly {
+            selector := mload(add(supplyData, 0x20))
+        }
+        assertEq(selector, bytes4(0xf2b9fdb8), "Supply selector incorrect");
 
         USDC.safeApprove(COMPOUND_V3_USDC, 1000 * 1e6);
-        COMPOUND_V3_USDC.callContract(supplyData);
+        (bool success,) = COMPOUND_V3_USDC.call(supplyData);
+        assertTrue(success, "Supply failed");
         console.log(" Supply executed");
 
         // Test withdraw (borrow in V3 is same as withdraw)
         bytes memory withdrawData =
-            wrapper.getCalldata(USDC, 500 * 1e6, user, wrapper.WITHDRAW(), wrapper.COMPOUND_V3());
+            wrapper.getCalldata(USDC, 500 * 1e6, alice, wrapper.WITHDRAW(), wrapper.COMPOUND_V3());
 
-        COMPOUND_V3_USDC.callContract(withdrawData);
+        (success,) = COMPOUND_V3_USDC.call(withdrawData);
+        assertTrue(success, "Withdraw failed");
         console.log("Withdraw executed");
     }
 }

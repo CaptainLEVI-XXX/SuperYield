@@ -20,5 +20,12 @@ abstract contract AddressInfo {
     address constant KYBER_AGGREGATOR = 0x6131B5fae19EA4f9D964eAc0408E4408b66337b5;
     address constant UniswapV3 = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
 
-    address user = address(0x23323);
+    address constant AAVE_DATA_PROVIDER = 0x41393e5e337606dc3821075Af65AeE84D7688CBD; // v3 ProtocolDataProvider
+
+    address constant INSTADAPP_FLASHLOAN = 0x619Ad2D02dBeE6ebA3CDbDA3F98430410e892882;
+
+    address alice = address(0x23323);
+    address bob = address(0x89334);
+
+    address admin = address(0x23e3e233);
 }

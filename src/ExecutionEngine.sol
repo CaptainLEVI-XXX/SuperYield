@@ -30,7 +30,6 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
         address supplyAsset;
         address borrowAsset;
         bytes32 currentVenue;
-        uint256 targetLtv;
         uint256 totalSupplied;
         uint256 totalBorrowed;
         PositionStatus status;
@@ -90,9 +89,9 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
         address supplyAsset,
         address borrowAsset,
         uint256 supplyAmount,
+        uint256 borrowAmount,
         uint256 flashLoanAmount,
         bytes32 venue,
-        uint256 targetLTV,
         uint16 routeForFlashLoan,
         DexSwapCalldata calldata swapData
     ) external onlyAdmin returns (uint256 positionId) {
@@ -107,6 +106,7 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
             supplyAsset: supplyAsset,
             borrowAsset: borrowAsset,
             initialSupply: supplyAmount,
+            borrowAmount: borrowAmount,
             flashLoanAmount: flashLoanAmount,
             venue: venue,
             swapCalldata: swapData
@@ -121,19 +121,21 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
             supplyAsset: supplyAsset,
             borrowAsset: borrowAsset,
             currentVenue: venue,
-            targetLtv: targetLTV,
             totalSupplied: supplyAmount,
-            totalBorrowed: flashLoanAmount,
+            totalBorrowed: borrowAmount,
             status: PositionStatus.Active
         });
 
         emit PositionOpened(positionId, vault, venue);
     }
 
-    function closePosition(uint256 positionId, DexSwapCalldata calldata swapData, uint16 routeForFlashLoan)
-        external
-        onlyAdmin
-    {
+    function closePosition(
+        uint256 positionId,
+        uint256 repayAmount,
+        uint256 withdrawAmount,
+        DexSwapCalldata calldata swapData,
+        uint16 routeForFlashLoan
+    ) external onlyAdmin {
         Position storage position = positions[positionId];
         require(position.status == PositionStatus.Active, "Position not active");
 
@@ -141,17 +143,78 @@ contract StrategyManager is DexHelper, Venue, Admin2Step, Rebalancer, Initializa
             supplyAsset: position.supplyAsset,
             borrowAsset: position.borrowAsset,
             venue: position.currentVenue,
-            repayAmount: position.totalBorrowed,
-            withdrawAmount: position.totalSupplied,
+            repayAmount: repayAmount,
+            withdrawAmount: withdrawAmount,
             swapCalldata: swapData
         });
 
         deleverage(deleverageData, routeForFlashLoan);
 
         position.status = PositionStatus.Inactive;
-        position.totalSupplied = 0;
-        position.totalBorrowed = 0;
         emit PositionClosed(positionId, position.totalSupplied);
+    }
+
+    /// @notice Move a position to a target LTV in a single flash-backed operation.
+    /// @dev Caller must provide flashLoanAmount denominated in supplyAsset (since leverage() flashloans supplyAsset),
+    ///      and borrowAmount denominated in borrowAsset (the amount to borrow from the venue after supplying).
+    ///      swapData for leverage MUST be borrowAsset -> supplyAsset (amountIn == borrowAmount).
+    function rebalanceToTargetLTV(
+        uint256 positionId,
+        uint256 targetLTV, // 1e18 precision
+        uint256 borrowAmount, // borrowAsset units needed to reach target (computed off-chain)
+        uint256 flashLoanAmount, // supplyAsset units to flashLoan (computed off-chain)
+        DexSwapCalldata calldata swapData, // should be borrowAsset -> supplyAsset when leveraging; opposite for deleveraging
+        uint16 routeForFlashLoan
+    ) external onlyAdmin {
+        Position storage pos = positions[positionId];
+        require(pos.status == PositionStatus.Active, "inactive");
+        require(targetLTV > 0 && targetLTV < 1e18, "bad target");
+
+        // compute current LTV (naive using stored accounting)
+        uint256 currentLTV = (pos.totalBorrowed * 1e18) / pos.totalSupplied;
+        if (currentLTV == targetLTV) return;
+
+        if (targetLTV > currentLTV) {
+            // Build LeverageData compatible with your Rebalancer
+            LeverageData memory data = LeverageData({
+                supplyAsset: pos.supplyAsset,
+                borrowAsset: pos.borrowAsset,
+                initialSupply: pos.totalSupplied,
+                borrowAmount: borrowAmount,
+                flashLoanAmount: flashLoanAmount,
+                venue: pos.currentVenue,
+                swapCalldata: swapData
+            });
+
+            // Make the flash-backed leverage call
+            leverage(data, routeForFlashLoan);
+
+            // NOTE: update accounting conservatively: we cannot know exact swapped amount on-chain here.
+            pos.totalBorrowed += borrowAmount;
+            pos.totalSupplied += flashLoanAmount; // approximate - replace with adapter read if available
+        } else {
+            // Delever: need to repay 'repayAmount' of borrowAsset; flashLoan must be in borrowAsset
+            uint256 repayAmount = pos.totalBorrowed - (pos.totalSupplied * targetLTV) / 1e18;
+
+            // swapData must be supplyAsset -> borrowAsset; amountIn should be withdrawAmount (collateral units)
+            // require(swapData.tokenIn == pos.supplyAsset, "swapData.tokenIn must be supplyAsset for delever");
+            // require(swapData.tokenOut == pos.borrowAsset, "swapData.tokenOut must be borrowAsset for delever");
+            // // caller should set swapData.amountIn to expected withdrawAmount (off-chain computed)
+            // // We'll accept it as-is and rely on adapter/exec to revert if insufficient
+            DeleverageData memory d = DeleverageData({
+                supplyAsset: pos.supplyAsset,
+                borrowAsset: pos.borrowAsset,
+                repayAmount: repayAmount,
+                withdrawAmount: borrowAmount,
+                venue: pos.currentVenue,
+                swapCalldata: swapData
+            });
+
+            deleverage(d, routeForFlashLoan);
+
+            pos.totalBorrowed -= repayAmount;
+            pos.totalSupplied -= borrowAmount; // approximate
+        }
     }
 
     /**

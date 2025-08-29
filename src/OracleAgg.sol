@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IChainlinkOracle, IUniswapV3Pool,ICustomOracle} from "./interfaces/IOracle.sol";
+import {IChainlinkOracle, IUniswapV3Pool, ICustomOracle} from "./interfaces/IOracle.sol";
 import {CustomRevert} from "./libraries/CustomRevert.sol";
 import {TickMath} from "./libraries/TickMath.sol";
 
@@ -60,7 +60,7 @@ contract OracleAggregator {
     error NotOwner();
 
     modifier onlyOwner() {
-        if(msg.sender!=owner) NotOwner.selector.revertWith();
+        if (msg.sender != owner) NotOwner.selector.revertWith();
         _;
     }
 
@@ -74,9 +74,9 @@ contract OracleAggregator {
         external
         onlyOwner
     {
-        if(!whitelistedOracles[primary.source]) OracleNotWhitelisted.selector.revertWith();
+        if (!whitelistedOracles[primary.source]) OracleNotWhitelisted.selector.revertWith();
         if (fback.source != address(0)) {
-            if(!whitelistedOracles[fback.source]) OracleNotWhitelisted.selector.revertWith();
+            if (!whitelistedOracles[fback.source]) OracleNotWhitelisted.selector.revertWith();
         }
 
         uint8 decimals = 18; // Default
@@ -105,7 +105,7 @@ contract OracleAggregator {
      */
     function getPrice(address base, address quote) external view returns (uint256 price) {
         PriceFeed memory feed = priceFeeds[base][quote];
-        if (feed.primary.source == address(0))  NoOracleConfigured.selector.revertWith();
+        if (feed.primary.source == address(0)) NoOracleConfigured.selector.revertWith();
 
         (uint256 primaryPrice, bool primaryValid) = _getOraclePrice(feed.primary, base, quote);
 
@@ -225,11 +225,7 @@ contract OracleAggregator {
         return diff * WAD / avg;
     }
 
-    function _getQuoteAtTick(int24 tick, address baseToken, address token0)
-        internal
-        pure
-        returns (uint256 quote)
-    {
+    function _getQuoteAtTick(int24 tick, address baseToken, address token0) internal pure returns (uint256 quote) {
         uint160 sqrtRatioX96 = tick.getSqrtPriceAtTick();
         uint256 sqrtRatioX96AsUint256 = uint256(sqrtRatioX96);
 

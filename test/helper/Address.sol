@@ -36,4 +36,5 @@ abstract contract AddressInfo {
     uint256 SMALL_AMOUNT_USDC = 10e6;
 
     uint256 FOUR_THOUSAND_DOLLAR = 4_000e6;
+    uint256 FIVE_THOUSAND_DOLLAR = 5_000e6;
 }

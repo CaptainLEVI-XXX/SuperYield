@@ -37,4 +37,20 @@ abstract contract AddressInfo {
 
     uint256 FOUR_THOUSAND_DOLLAR = 4_000e6;
     uint256 FIVE_THOUSAND_DOLLAR = 5_000e6;
+
+    // Chainlink feeds (mainnet)
+    address constant ETH_USD = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419; // ETH/USD
+    address constant WBTC_USD = 0xFD858C8Bc5AC5E10C7d4AD0A7Eb7b8d6FC6c4B79; // WBTC/USD
+
+    // Uniswap V3 WBTC/WETH 0.3% pool
+    address constant WBTC_WETH_V3_POOL = 0xcbF7a1D81726D5cdFdB2B79a7a1Be3a5f7c84e29;
+
+    // Tokens
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+
+    // Chainlink feeds
+    address constant USDC_USD = 0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6;
+
+    // Uniswap V3 pool WETH/USDC 0.05%
+    address constant WETH_USDC_V3_POOL = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
 }

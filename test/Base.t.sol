@@ -15,6 +15,7 @@ import {PreLiquidationManager} from "../src/PreLiquidation.sol";
 import {IUniswapV3Router} from "../src/interfaces/IUniswapV3Router.sol";
 import {DexHelper} from "../src/abstract/DexHelper.sol";
 import {AaveV3Adapter} from "../src/adapter/AaveV3.sol";
+import {OracleAggregator} from "../src/OracleAgg.sol";
 
 abstract contract BaseTest is Test, AddressInfo {
     using SafeTransferLib for address;
@@ -27,6 +28,7 @@ abstract contract BaseTest is Test, AddressInfo {
     UniversalLendingWrapper public ulw;
     PreLiquidationManager public preLiquidationManager;
     AaveV3Adapter public aaveAdapter;
+    OracleAggregator public oracleAggregator;
 
     function setUp() public virtual {
         vm.createSelectFork(vm.envString("ETH_RPC_URL"), MAINNET_FORK_BLOCK);
@@ -39,6 +41,7 @@ abstract contract BaseTest is Test, AddressInfo {
         _deployEthWrapper();
         _deployUniversalLendingWrapper();
         _deployPreLiquidationManager();
+        _deployOracleAggregator();
         // build the initialization data for the protocol
         _setUpInitializationData();
 
@@ -89,8 +92,12 @@ abstract contract BaseTest is Test, AddressInfo {
         preLiquidationManager = PreLiquidationManager(proxy);
     }
 
+    function _deployOracleAggregator() internal {
+        oracleAggregator = new OracleAggregator(admin);
+    }
+
     function deployAaveAdapter() internal {
-        aaveAdapter = new AaveV3Adapter(AAVE_DATA_PROVIDER, address(0)); //replace it by oracle address);
+        aaveAdapter = new AaveV3Adapter(AAVE_DATA_PROVIDER, address(oracleAggregator)); //replace it by oracle address);
     }
 
     function _setUpInitializationData() internal {
@@ -111,6 +118,42 @@ abstract contract BaseTest is Test, AddressInfo {
         ethWrapper.whitelistRoute("UniswapV3", UniswapV3);
         // PreLiquidationManager
         preLiquidationManager.initialize(address(strategyManager), INSTADAPP_FLASHLOAN, admin);
+        console.log("PreLiquidationManager initialized");
+
+        oracleAggregator.whitelistOracle(ETH_USD, true);
+        oracleAggregator.whitelistOracle(USDC_USD, true);
+        oracleAggregator.whitelistOracle(WETH_USDC_V3_POOL, true);
+
+        OracleAggregator.OracleConfig memory primary = OracleAggregator.OracleConfig({
+            oracleType: OracleAggregator.OracleType.Chainlink,
+            source: ETH_USD,
+            maxDeviation: 1e18,
+            maxStaleness: 86400,
+            isActive: true
+        });
+        OracleAggregator.OracleConfig memory fallbck;
+
+        oracleAggregator.configurePriceFeed(WETH, oracleAggregator.USD(), primary, fallbck);
+
+        primary = OracleAggregator.OracleConfig({
+            oracleType: OracleAggregator.OracleType.Chainlink,
+            source: USDC_USD,
+            maxDeviation: 1e18,
+            maxStaleness: 86400,
+            isActive: true
+        });
+
+        oracleAggregator.configurePriceFeed(USDC, oracleAggregator.USD(), primary, fallbck);
+
+        primary = OracleAggregator.OracleConfig({
+            oracleType: OracleAggregator.OracleType.UniV3TWAP,
+            source: WETH_USDC_V3_POOL,
+            maxDeviation: 1e18,
+            maxStaleness: 86400,
+            isActive: true
+        });
+
+        oracleAggregator.configurePriceFeed(WETH, USDC, primary, fallbck);
 
         vm.stopPrank();
     }

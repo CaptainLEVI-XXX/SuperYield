@@ -10,7 +10,6 @@ contract OracleAggregator {
     using CustomRevert for bytes4;
 
     enum OracleType {
-        None,
         Chainlink,
         UniV3TWAP,
         Custom
@@ -18,7 +17,7 @@ contract OracleAggregator {
 
     struct OracleConfig {
         OracleType oracleType;
-        address source; // Chainlink feed or Uniswap pool
+        address source; // Chainlink feed or  Uniswap pool
         uint256 maxDeviation; // Max % deviation between oracles (1e18 = 100%)
         uint256 maxStaleness; // Max seconds before considered stale
         bool isActive;
@@ -68,8 +67,6 @@ contract OracleAggregator {
         owner = _owner;
     }
 
-    // ======================== CONFIGURATION ========================
-
     function configurePriceFeed(address base, address quote, OracleConfig memory primary, OracleConfig memory fback)
         external
         onlyOwner
@@ -95,14 +92,6 @@ contract OracleAggregator {
         emit OracleWhitelisted(oracle, status);
     }
 
-    // ======================== PRICE QUERIES ========================
-
-    /**
-     * @notice Get price of base token in quote token
-     * @param base Base token address
-     * @param quote Quote token address (use address(0) for USD)
-     * @return price Price with 18 decimals
-     */
     function getPrice(address base, address quote) external view returns (uint256 price) {
         PriceFeed memory feed = priceFeeds[base][quote];
         if (feed.primary.source == address(0)) NoOracleConfigured.selector.revertWith();
@@ -151,9 +140,6 @@ contract OracleAggregator {
         return (0, false);
     }
 
-    /**
-     * @notice Get Chainlink price
-     */
     function _getChainlinkPrice(OracleConfig memory config) internal view returns (uint256 price, bool valid) {
         IChainlinkOracle oracle = IChainlinkOracle(config.source);
 
@@ -170,9 +156,6 @@ contract OracleAggregator {
         }
     }
 
-    /**
-     * @notice Get Uniswap V3 TWAP price
-     */
     function _getUniV3TWAPPrice(OracleConfig memory config, address base)
         internal
         view
@@ -192,16 +175,12 @@ contract OracleAggregator {
             // Calculate price from tick
             price = _getQuoteAtTick(arithmeticMeanTick, base, pool.token0());
 
-            // Check staleness (simplified - in production check pool activity)
             return (price, true);
         } catch {
             return (0, false);
         }
     }
 
-    /**
-     * @notice Get custom oracle price (for specialized oracles)
-     */
     function _getCustomPrice(OracleConfig memory config, address base, address quote)
         internal
         view
@@ -216,8 +195,6 @@ contract OracleAggregator {
             return (0, false);
         }
     }
-
-    // ======================== HELPERS ========================
 
     function _calculateDeviation(uint256 price1, uint256 price2) internal pure returns (uint256) {
         uint256 diff = price1 > price2 ? price1 - price2 : price2 - price1;
@@ -239,12 +216,6 @@ contract OracleAggregator {
         }
     }
 
-    // ======================== ADAPTER FUNCTIONS ========================
-
-    /**
-     * @notice Get price for liquidation calculations
-     * @dev Returns price in 18 decimals for consistency
-     */
     function getPriceForLiquidation(address collateral, address debt) external view returns (uint256) {
         // Try to get collateral/debt price directly
         PriceFeed memory directFeed = priceFeeds[collateral][debt];
@@ -252,7 +223,6 @@ contract OracleAggregator {
             return this.getPrice(collateral, debt);
         }
 
-        // Otherwise get both in USD and calculate
         uint256 collateralUsd = this.getPrice(collateral, USD);
         uint256 debtUsd = this.getPrice(debt, USD);
 

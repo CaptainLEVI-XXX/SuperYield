@@ -18,7 +18,7 @@ contract UniversalLendingWrapper {
     error InvalidOperation();
     error InvalidProtocol();
 
-    // New batch function for supply + borrow
+    // batch function for supply + borrow
     function getBatchSupplyBorrow(
         address supplyAsset,
         uint256 supplyAmount,
@@ -31,7 +31,7 @@ contract UniversalLendingWrapper {
         borrowData = _getCalldata(borrowAsset, borrowAmount, receiver, BORROW, protocol);
     }
 
-    // New batch function for repay + withdraw (for deleveraging)
+    //batch function for repay + withdraw 
     function getBatchRepayWithdraw(
         address repayAsset,
         uint256 repayAmount,
@@ -44,7 +44,7 @@ contract UniversalLendingWrapper {
         withdrawData = _getCalldata(withdrawAsset, withdrawAmount, receiver, WITHDRAW, protocol);
     }
 
-    // New function that returns packed calldata for multicall execution
+    // function that returns packed calldata for multicall execution
     function getMulticallData(
         address supplyAsset,
         uint256 supplyAmount,

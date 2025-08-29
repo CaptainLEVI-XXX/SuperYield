@@ -14,39 +14,9 @@ library TickMath {
     /// @notice Thrown when the price passed to #getTickAtSqrtPrice does not correspond to a price between MIN_TICK and MAX_TICK
     error InvalidSqrtPrice(uint160 sqrtPriceX96);
 
-    /// @dev The minimum tick that may be passed to #getSqrtPriceAtTick computed from log base 1.0001 of 2**-128
-    /// @dev If ever MIN_TICK and MAX_TICK are not centered around 0, the absTick logic in getSqrtPriceAtTick cannot be used
-    int24 internal constant MIN_TICK = -887272;
     /// @dev The maximum tick that may be passed to #getSqrtPriceAtTick computed from log base 1.0001 of 2**128
     /// @dev If ever MIN_TICK and MAX_TICK are not centered around 0, the absTick logic in getSqrtPriceAtTick cannot be used
     int24 internal constant MAX_TICK = 887272;
-
-    /// @dev The minimum tick spacing value drawn from the range of type int16 that is greater than 0, i.e. min from the range [1, 32767]
-    int24 internal constant MIN_TICK_SPACING = 1;
-    /// @dev The maximum tick spacing value drawn from the range of type int16, i.e. max from the range [1, 32767]
-    int24 internal constant MAX_TICK_SPACING = type(int16).max;
-
-    /// @dev The minimum value that can be returned from #getSqrtPriceAtTick. Equivalent to getSqrtPriceAtTick(MIN_TICK)
-    uint160 internal constant MIN_SQRT_PRICE = 4295128739;
-    /// @dev The maximum value that can be returned from #getSqrtPriceAtTick. Equivalent to getSqrtPriceAtTick(MAX_TICK)
-    uint160 internal constant MAX_SQRT_PRICE = 1461446703485210103287273052203988822378723970342;
-    /// @dev A threshold used for optimized bounds check, equals `MAX_SQRT_PRICE - MIN_SQRT_PRICE - 1`
-    uint160 internal constant MAX_SQRT_PRICE_MINUS_MIN_SQRT_PRICE_MINUS_ONE =
-        1461446703485210103287273052203988822378723970342 - 4295128739 - 1;
-
-    /// @notice Given a tickSpacing, compute the maximum usable tick
-    function maxUsableTick(int24 tickSpacing) internal pure returns (int24) {
-        unchecked {
-            return (MAX_TICK / tickSpacing) * tickSpacing;
-        }
-    }
-
-    /// @notice Given a tickSpacing, compute the minimum usable tick
-    function minUsableTick(int24 tickSpacing) internal pure returns (int24) {
-        unchecked {
-            return (MIN_TICK / tickSpacing) * tickSpacing;
-        }
-    }
 
     /// @notice Calculates sqrt(1.0001^tick) * 2^96
     /// @dev Throws if |tick| > max tick
@@ -109,129 +79,6 @@ library TickMath {
                 // `price + type(uint32).max` will not overflow because `price` fits in 192 bits
                 sqrtPriceX96 := shr(32, add(price, sub(shl(32, 1), 1)))
             }
-        }
-    }
-
-    /// @notice Calculates the greatest tick value such that getSqrtPriceAtTick(tick) <= sqrtPriceX96
-    /// @dev Throws in case sqrtPriceX96 < MIN_SQRT_PRICE, as MIN_SQRT_PRICE is the lowest value getSqrtPriceAtTick may
-    /// ever return.
-    /// @param sqrtPriceX96 The sqrt price for which to compute the tick as a Q64.96
-    /// @return tick The greatest tick for which the getSqrtPriceAtTick(tick) is less than or equal to the input sqrtPriceX96
-    function getTickAtSqrtPrice(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
-        unchecked {
-            // Equivalent: if (sqrtPriceX96 < MIN_SQRT_PRICE || sqrtPriceX96 >= MAX_SQRT_PRICE) revert InvalidSqrtPrice();
-            // second inequality must be >= because the price can never reach the price at the max tick
-            // if sqrtPriceX96 < MIN_SQRT_PRICE, the `sub` underflows and `gt` is true
-            // if sqrtPriceX96 >= MAX_SQRT_PRICE, sqrtPriceX96 - MIN_SQRT_PRICE > MAX_SQRT_PRICE - MIN_SQRT_PRICE - 1
-            if ((sqrtPriceX96 - MIN_SQRT_PRICE) > MAX_SQRT_PRICE_MINUS_MIN_SQRT_PRICE_MINUS_ONE) {
-                InvalidSqrtPrice.selector.revertWith(uint256(sqrtPriceX96));
-            }
-
-            uint256 price = uint256(sqrtPriceX96) << 32;
-
-            uint256 r = price;
-            uint256 msb = mostSignificantBit(r);
-
-            if (msb >= 128) r = price >> (msb - 127);
-            else r = price << (127 - msb);
-            // forge-lint: disable-next-line(unsafe-typecast)
-            int256 log_2 = (int256(msb) - 128) << 64;
-
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(63, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(62, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(61, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(60, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(59, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(58, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(57, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(56, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(55, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(54, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(53, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(52, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(51, f))
-                r := shr(f, r)
-            }
-            assembly ("memory-safe") {
-                r := shr(127, mul(r, r))
-                let f := shr(128, r)
-                log_2 := or(log_2, shl(50, f))
-            }
-
-            int256 log_sqrt10001 = log_2 * 255738958999603826347141; // Q22.128 number
-
-            // Magic number represents the ceiling of the maximum value of the error when approximating log_sqrt10001(x)
-            int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
-
-            // Magic number represents the minimum value of the error when approximating log_sqrt10001(x), when
-            // sqrtPrice is from the range (2^-64, 2^64). This is safe as MIN_SQRT_PRICE is more than 2^-64. If MIN_SQRT_PRICE
-            // is changed, this may need to be changed too
-            int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
-
-            tick = tickLow == tickHi ? tickLow : getSqrtPriceAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
         }
     }
 

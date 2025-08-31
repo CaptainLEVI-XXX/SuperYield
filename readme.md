@@ -3,8 +3,7 @@
 > **Note**: These contracts are prototypes built for just as an prototype.Chances are there for any bugs preferably to access control or some logic errors.
 
 
-![SuperYield Architecture](src/image/superyield.png)
-
+![SuperYield Architecture](./image/superyield.png)
 
 ---
 

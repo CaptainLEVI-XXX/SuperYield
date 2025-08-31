@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IChainlinkOracle, IUniswapV3Pool, ICustomOracle} from "./interfaces/IOracle.sol";
+import {IChainlinkOracle, IUniswapV3Pool, IOracle} from "./interfaces/IOracle.sol";
 import {CustomRevert} from "./libraries/CustomRevert.sol";
 import {TickMath} from "./libraries/TickMath.sol";
 
@@ -188,7 +188,7 @@ contract OracleAggregator {
     {
         // Call custom oracle interface
         // This could be Pendle oracle, Term oracle, etc.
-        ICustomOracle oracle = ICustomOracle(config.source);
+        IOracle oracle = IOracle(config.source);
         try oracle.getPrice(base, quote) returns (uint256 p) {
             return (p, true);
         } catch {

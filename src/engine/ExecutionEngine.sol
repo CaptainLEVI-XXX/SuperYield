@@ -30,7 +30,7 @@ contract StrategyManager is
     using SafeTransferLib for address;
     using LibCall for address;
     using CustomRevert for bytes4;
-    using WadMath for *;
+    using WadMath for uint256;
 
     modifier onlyVault() {
         if (!_vaultStorage().vaults[msg.sender]) InvalidCaller.selector.revertWith();
@@ -73,9 +73,10 @@ contract StrategyManager is
         DexSwapCalldata calldata swapData
     ) external onlyAdmin returns (uint256 positionId) {
         PositionStorage storage pos = _positionStorage();
+        VenueStorage storage venueInfo = _venueStorage();
         VaultInfo storage vaultInfo = _vaultStorage();
 
-        if (!venues[venue].active) InvalidCaller.selector.revertWith();
+        if (!venueInfo.venues[venue].active) InvalidCaller.selector.revertWith();
         if (!vaultInfo.vaults[vault]) InvalidCaller.selector.revertWith();
 
         positionId = ++pos.nextPositionId;
@@ -96,11 +97,12 @@ contract StrategyManager is
 
         leverage(leverageData, routeForFlashLoan);
 
-        (uint256 collateralUsd, uint256 debtUsd) =
-            venues[venue].adapter.getPositionUsd(supplyAsset, borrowAsset, address(this));
+        IProtocolAdapter adapter = venueInfo.venues[venue].adapter;
 
-        uint256 totalSupplied_ = collateralUsd / IERC20Metadata(supplyAsset).decimals();
-        uint256 totalBorrowed_ = debtUsd / IERC20Metadata(borrowAsset).decimals();
+        (uint256 collateralUsd, uint256 debtUsd) = adapter.getPositionUsd(supplyAsset, borrowAsset, address(this));
+
+        uint256 totalSupplied_ = adapter.usdToTokenUnits(supplyAsset, collateralUsd - WadMath.WAD); //collateralUsd-1e18 is for difference in price since we are using our own oracle
+        uint256 totalBorrowed_ = adapter.usdToTokenUnits(borrowAsset, debtUsd);
 
         pos.positions[positionId] = Position({
             vault: vault,
@@ -216,25 +218,22 @@ contract StrategyManager is
     /**
      * @notice Rebalance position to different venue
      */
-    function rebalancePosition(
-        uint256 positionId,
-        bytes32 toVenue,
-        DexSwapCalldata calldata swapData,
-        uint16 routeForFlashLoan
-    ) external onlyAdmin {
+    function migratePosition(uint256 positionId, bytes32 toVenue, uint16 routeForFlashLoan) external onlyAdmin {
         Position storage position = _positionStorage().positions[positionId];
         require(position.status == PositionStatus.Active, "Not active");
-        require(venues[toVenue].active, "Venue not active");
+        require(_venueStorage().venues[toVenue].active, "Venue not active");
 
         RebalanceData memory rebalanceData = RebalanceData({
             fromVenue: position.currentVenue,
             toVenue: toVenue,
             moveSupplyAmount: position.totalSupplied,
             moveBorrowAmount: position.totalBorrowed,
-            swapCalldata: swapData,
             supplyAsset: position.supplyAsset,
             borrowAsset: position.borrowAsset
         });
+
+        console.log("moveSupplyAmount: ", rebalanceData.moveSupplyAmount);
+        console.log("moveBorrowAmount: ", rebalanceData.moveBorrowAmount);
 
         rebalance(rebalanceData, routeForFlashLoan);
 
@@ -252,7 +251,7 @@ contract StrategyManager is
         // console.log("executePreLiquidation: seizeAmount", seizeAmount);
         Position storage position = _positionStorage().positions[positionId];
         require(position.status == PositionStatus.Active, "Not active");
-        VenueInfo memory venue = venues[position.currentVenue];
+        VenueInfo memory venue = _venueStorage().venues[position.currentVenue];
 
         // Take repay amount from Liquidator
         position.borrowAsset.safeTransferFrom(msg.sender, address(this), repayAmount);
@@ -306,6 +305,10 @@ contract StrategyManager is
     function getPosition(uint256 positionId) external view returns (uint256 collateral, uint256 debt) {
         Position storage position = _positionStorage().positions[positionId];
         return (position.totalSupplied, position.totalBorrowed);
+    }
+
+    function setUniversalLendingWrapper(address _wrapper) external onlyAdmin {
+        calldataGenerator = IUniversalLendingWrapper(_wrapper);
     }
 
     function getDeployedValue(address vault) external view returns (uint256) {

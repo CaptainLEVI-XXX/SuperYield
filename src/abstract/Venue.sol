@@ -11,21 +11,31 @@ abstract contract Venue {
         uint8 id;
     }
     // venue info
+    struct VenueStorage{
+        mapping(bytes32 => VenueInfo) venues;
+    }
 
-    mapping(bytes32 => VenueInfo) public venues;
+    bytes32 public constant VENUE_STORAGE_POSITION = keccak256("superyield.venue.storage");
+
+    function _venueStorage() internal pure returns (VenueStorage storage venueStorage) {
+        bytes32 position = VENUE_STORAGE_POSITION;
+        assembly {
+            venueStorage.slot := position
+        }
+    }
 
     function registerVenue(address router, uint8 identifier, address adapter) public virtual {
         bytes32 identifier_ = keccak256(abi.encodePacked(router));
-        venues[identifier_] =
+        _venueStorage().venues[identifier_] =
             VenueInfo({router: router, active: true, id: identifier, adapter: IProtocolAdapter(adapter)});
     }
 
     function getVenueInfo(address router) public view returns (VenueInfo memory) {
         bytes32 identifier_ = keccak256(abi.encodePacked(router));
-        return venues[identifier_];
+        return _venueStorage().venues[identifier_];
     }
 
     function setVenueStatus(bytes32 venueId, bool status) external virtual {
-        venues[venueId].active = status;
+        _venueStorage().venues[venueId].active = status;
     }
 }

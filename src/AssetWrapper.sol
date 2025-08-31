@@ -77,7 +77,7 @@ contract AssetVaultWrapper is Admin2Step, DexHelper {
         // -1 to account for potential rounding errors
         if (vaultWithdrawnAmount < amount_ - 1) AssetVaultWrapper__UnexpectedWithdrawAmount.selector.revertWith();
 
-        // approve stETH
+        // approve 
         asset.safeApprove(getDexRouter(swapCalldata_.identifier), vaultWithdrawnAmount);
 
         performSwap(swapCalldata_);

@@ -34,65 +34,65 @@ abstract contract BaseTest is Test, AddressInfo {
 
     function setUp() public virtual {
         vm.createSelectFork(vm.envString("ETH_RPC_URL"), MAINNET_FORK_BLOCK);
-        
+
         // Deploy contracts
         factory = new ERC1967Factory();
-        
+
         // Deploy and initialize ExecutionEngine
         StrategyManager impl = new StrategyManager();
         address proxy = factory.deploy(address(impl), admin);
         strategyManager = StrategyManager(proxy);
-        
+
         // Deploy core contracts
         superVault = new SuperVault(admin, address(strategyManager), USDC, "sUSDC", "sUSDC");
         assetWrapper = new AssetVaultWrapper(address(superVault), admin, WETH);
         ethWrapper = new EthVaultWrapper(address(superVault), admin);
         ulw = new UniversalLendingWrapper();
-        
+
         // Deploy PreLiquidation
         PreLiquidationManager preLiqImpl = new PreLiquidationManager();
         proxy = factory.deploy(address(preLiqImpl), admin);
         preLiquidationManager = PreLiquidationManager(proxy);
-        
+
         // Deploy Oracle and Adapter
         oracleAggregator = new OracleAggregator(admin);
         aaveAdapter = new AaveV3Adapter(AAVE_DATA_PROVIDER, address(oracleAggregator), admin);
-        
+
         // Initialize contracts
         _initializeProtocol();
-        
+
         // Setup test users
         _setupUsers();
     }
 
     function _initializeProtocol() internal {
         strategyManager.initialize(INSTADAPP_FLASHLOAN, address(ulw), address(preLiquidationManager), admin);
-        
+
         vm.startPrank(admin);
-        
+
         // Register vault and routes
         strategyManager.registerVault(address(superVault));
         strategyManager.whitelistRoute("UniswapV3", UniswapV3);
-        
+
         // Register venues
         strategyManager.registerVenue(AAVE_V3_POOL, 0, address(aaveAdapter));
         strategyManager.registerVenue(COMPOUND_V3_USDC, 2, address(0));
         strategyManager.registerVenue(MORPHO_AAVE, 4, address(0));
-        
+
         // Setup wrappers
         assetWrapper.whitelistRoute("UniswapV3", UniswapV3);
         ethWrapper.whitelistRoute("UniswapV3", UniswapV3);
-        
+
         // Initialize PreLiquidation
         preLiquidationManager.initialize(address(strategyManager), INSTADAPP_FLASHLOAN, admin);
         preLiquidationManager.whitelistRoute("UniswapV3", UniswapV3);
-        
+
         // Setup oracles
         _setupOracles();
-        
+
         // Register market
         marketId = aaveAdapter.registerMarket(USDC, WETH);
-        
+
         vm.stopPrank();
     }
 
@@ -135,7 +135,7 @@ abstract contract BaseTest is Test, AddressInfo {
         deal(WETH, bob, LARGE_AMOUNT_WETH + SMALL_AMOUNT_WETH);
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
-        
+
         // Setup approvals for Alice
         vm.startPrank(alice);
         WETH.safeApprove(address(superVault), type(uint256).max);
@@ -143,7 +143,7 @@ abstract contract BaseTest is Test, AddressInfo {
         USDC.safeApprove(address(assetWrapper), type(uint256).max);
         WETH.safeApprove(address(assetWrapper), type(uint256).max);
         vm.stopPrank();
-        
+
         // Setup approvals for Bob
         vm.startPrank(bob);
         WETH.safeApprove(address(superVault), type(uint256).max);
@@ -153,12 +153,11 @@ abstract contract BaseTest is Test, AddressInfo {
         vm.stopPrank();
     }
 
-    function buildSwapParams(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        address receiver
-    ) internal view returns (DexHelper.DexSwapCalldata memory) {
+    function buildSwapParams(address tokenIn, address tokenOut, uint256 amountIn, address receiver)
+        internal
+        view
+        returns (DexHelper.DexSwapCalldata memory)
+    {
         IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
             tokenIn: tokenIn,
             tokenOut: tokenOut,
@@ -190,14 +189,7 @@ abstract contract BaseTest is Test, AddressInfo {
 
         vm.prank(admin);
         preLiquidationManager.configureMarket(
-            marketId,
-            1,
-            address(aaveAdapter),
-            params,
-            0.7e18,
-            0.5e18,
-            300,
-            flashLoanEnabled
+            marketId, 1, address(aaveAdapter), params, 0.7e18, 0.5e18, 300, flashLoanEnabled
         );
     }
 }

@@ -11,7 +11,8 @@ abstract contract Venue {
         uint8 id;
     }
     // venue info
-    struct VenueStorage{
+
+    struct VenueStorage {
         mapping(bytes32 => VenueInfo) venues;
     }
 

@@ -142,7 +142,6 @@ contract Rebalancer is DexHelper, Venue, IInstaFlashReceiverInterface {
     }
 
     function _executeDeleverage(bytes memory data, uint256 premium) internal {
-
         DeleverageData memory deleverageData = abi.decode(data, (DeleverageData));
         VenueInfo memory venue = _venueStorage().venues[deleverageData.venue];
 

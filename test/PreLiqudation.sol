@@ -20,11 +20,11 @@ contract PreLiquidationTest is BaseTest {
 
         // Configure pre-liquidation parameters
         PreLiquidationCore.PreLiquidationParams memory params = PreLiquidationCore.PreLiquidationParams({
-            preLltv: 0.7e18,    // 70% - start of pre-liquidation band
-            preLCF1: 0.1e18,    // 10% - close factor at preLltv
-            preLCF2: 0.5e18,    // 50% - close factor at protocol LLTV
-            preLIF1: 1.02e18,   // 102% - liquidation incentive at preLltv (2% bonus)
-            preLIF2: 1.05e18,   // 105% - liquidation incentive at protocol LLTV (5% bonus)
+            preLltv: 0.7e18, // 70% - start of pre-liquidation band
+            preLCF1: 0.1e18, // 10% - close factor at preLltv
+            preLCF2: 0.5e18, // 50% - close factor at protocol LLTV
+            preLIF1: 1.02e18, // 102% - liquidation incentive at preLltv (2% bonus)
+            preLIF2: 1.05e18, // 105% - liquidation incentive at protocol LLTV (5% bonus)
             dustThreshold: 50e18 // $50 minimum position size
         });
 
@@ -35,17 +35,15 @@ contract PreLiquidationTest is BaseTest {
             positionId,
             address(aaveAdapter),
             params,
-            0.65e18,  // targetLtv - 65%
-            1e18,     // maxRepayPct - 100%
-            0,        // cooldown - no cooldown
-            false     // flashLoanEnabled
+            0.65e18, // targetLtv - 65%
+            1e18, // maxRepayPct - 100%
+            0, // cooldown - no cooldown
+            false // flashLoanEnabled
         );
 
         // Check initial position state
-        (uint256 initialCollateralUsd, uint256 initialDebtUsd) = aaveAdapter.getPositionUsd(
-            marketId, 
-            address(strategyManager)
-        );
+        (uint256 initialCollateralUsd, uint256 initialDebtUsd) =
+            aaveAdapter.getPositionUsd(marketId, address(strategyManager));
 
         console.log("Initial collateral USD:", initialCollateralUsd);
         console.log("Initial debt USD:", initialDebtUsd);
@@ -90,10 +88,8 @@ contract PreLiquidationTest is BaseTest {
         console.log("Keeper profit USD:", actualSeizedUsd - actualRepaidUsd);
 
         // Check position after pre-liquidation
-        (uint256 finalCollateralUsd, uint256 finalDebtUsd) = aaveAdapter.getPositionUsd(
-            marketId, 
-            address(strategyManager)
-        );
+        (uint256 finalCollateralUsd, uint256 finalDebtUsd) =
+            aaveAdapter.getPositionUsd(marketId, address(strategyManager));
 
         console.log("Final collateral USD:", finalCollateralUsd);
         console.log("Final debt USD:", finalDebtUsd);
@@ -137,54 +133,34 @@ contract PreLiquidationTest is BaseTest {
         );
 
         // Get position metrics
-        (uint256 initialCollateralUsd, uint256 initialDebtUsd) = aaveAdapter.getPositionUsd(
-            marketId, 
-            address(strategyManager)
-        );
+        (uint256 initialCollateralUsd, uint256 initialDebtUsd) =
+            aaveAdapter.getPositionUsd(marketId, address(strategyManager));
 
         uint256 initialLtv = initialDebtUsd.wDiv(initialCollateralUsd);
         console.log("Initial LTV:", initialLtv / 1e16, "%");
 
         // Check eligibility
-        (
-            bool eligible,
-            ,
-            ,
-            ,
-            uint256 optimalRepayUsd,
-            uint256 expectedSeizeUsd,
-            
-        ) = preLiquidationManager.checkPosition(marketId);
+        (bool eligible,,,, uint256 optimalRepayUsd, uint256 expectedSeizeUsd,) =
+            preLiquidationManager.checkPosition(marketId);
 
         assertTrue(eligible, "Position should be eligible");
 
         // Calculate seized amount for swap
         uint256 seizeAmountTokens = aaveAdapter.usdToTokenUnits(address(USDC), expectedSeizeUsd);
-        
-        DexHelper.DexSwapCalldata memory swapData = buildSwapParams(
-            USDC,
-            WETH,
-            seizeAmountTokens,
-            address(preLiquidationManager)
-        );
+
+        DexHelper.DexSwapCalldata memory swapData =
+            buildSwapParams(USDC, WETH, seizeAmountTokens, address(preLiquidationManager));
 
         // Execute flash loan pre-liquidation
         uint256 gasBefore = gasleft();
-        preLiquidationManager.preLiquidateWithFlashLoan(
-            marketId,
-            optimalRepayUsd,
-            5,
-            swapData
-        );
+        preLiquidationManager.preLiquidateWithFlashLoan(marketId, optimalRepayUsd, 5, swapData);
         uint256 gasAfter = gasleft();
 
         console.log("Gas used for flash loan pre-liquidation:", gasBefore - gasAfter);
 
         // Check final state
-        (uint256 finalCollateralUsd, uint256 finalDebtUsd) = aaveAdapter.getPositionUsd(
-            marketId, 
-            address(strategyManager)
-        );
+        (uint256 finalCollateralUsd, uint256 finalDebtUsd) =
+            aaveAdapter.getPositionUsd(marketId, address(strategyManager));
 
         console.log("Final collateral USD:", finalCollateralUsd);
         console.log("Final debt USD:", finalDebtUsd);
@@ -207,12 +183,12 @@ contract PreLiquidationTest is BaseTest {
         bytes32 venue = keccak256(abi.encodePacked(AAVE_V3_POOL));
         uint256 flashLoanAmount = 4000e6;
         DexHelper.DexSwapCalldata memory swapData = buildSwapParams(
-            WETH, 
-            USDC, 
+            WETH,
+            USDC,
             1.4e18, // Higher borrow for 74% LTV
             address(strategyManager)
         );
-        
+
         vm.prank(admin);
         return strategyManager.openPosition(
             address(superVault),

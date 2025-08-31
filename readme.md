@@ -75,11 +75,13 @@
 - Both keeper-funded and flash loan liquidations
 
 #### Pre-Liquidation Mechanics:
+``` bash
 LTV Range: [preLltv → protocolLltv]
 ├── At preLltv: Minimal intervention (LIF=1.01, LCF=5%)
 ├── At protocolLltv: Maximum intervention (LIF=1.10, LCF=50%)
 └── Linear interpolation between bounds
 Keeper Incentive: Profit = SeizedCollateral × LIF - RepaidDebt
+```
 
 ### 4. UniversalLendingWrapper (ULW)
 **File**: `src/UniversalLendingWrapper.sol`
@@ -113,6 +115,7 @@ Keeper Incentive: Profit = SeizedCollateral × LIF - RepaidDebt
 ## Main System Flows
 
 ### 1. Deposit Flow
+``` bash
 User → SuperVault.deposit()
 ├── Transfer assets from user
 ├── Mint shares based on current PPS
@@ -121,15 +124,18 @@ User → SuperVault.deposit()
 Alternative: ETH/Asset Wrappers
 ├── EthWrapper: ETH → WETH → Vault Asset → Deposit
 └── AssetWrapper: User Token → Vault Asset → Deposit
+```
 
 ### 2. Withdrawal Flow
 
+``` bash
 #### Instant Withdrawal:
 User → SuperVault.withdraw()
 ├── Check reserves availability
 ├── Transfer assets directly from reserves
 └── Update vault state
-
+```
+``` bash
 #### Async Withdrawal:
 User → SuperVault.requestWithdrawal()
 ├── Lock user shares in vault
@@ -143,8 +149,12 @@ User → SuperVault.claimWithdrawal()
 ├── Transfer assets to user
 ├── Burn locked shares
 └── Update claimable assets
+```
+
+
 
 ### 3. Open Position Flow
+``` bash
 Admin → StrategyManager.openPosition()
 ├── 1. Take supply asset from vault (e.g., 5000 USDC)
 ├── 2. Flash loan additional supply asset (e.g., 4000 USDC)
@@ -153,8 +163,10 @@ Admin → StrategyManager.openPosition()
 ├── 5. Swap borrowed asset to supply asset (WETH→USDC)
 ├── 6. Repay flash loan (4000 USDC + premium)
 └── 7. Store position data (74% LTV achieved)
+```
 
 ### 4. Close Position Flow
+``` bash
 Admin → StrategyManager.closePosition()
 ├── 1. Flash loan borrowed asset (1.4 WETH)
 ├── 2. Repay all debt to protocol
@@ -162,8 +174,10 @@ Admin → StrategyManager.closePosition()
 ├── 4. Swap collateral to borrowed asset (USDC→WETH)
 ├── 5. Repay flash loan (1.4 WETH + premium)
 └── 6. Return remaining assets to vault
+```
 
 ### 5. Migrate Position Flow
+``` bash
 Admin → StrategyManager.migratePosition()
 ├── 1. Flash loan borrowed asset amount (e.g., 1.4 WETH)
 ├── 2. Repay all debt on source venue (e.g., Aave)
@@ -172,10 +186,12 @@ Admin → StrategyManager.migratePosition()
 ├── 5. Borrow debt asset from target venue (1.4 WETH + premium)
 ├── 6. Repay flash loan (1.4 WETH + premium)
 └── 7. Update position venue and status to 'Migrated'
+```
 
 ### 6. Pre-liquidation Flow
 
 #### Regular Pre-liquidation:
+``` bash
 Keeper → PreLiquidationManager.preLiquidate()
 ├── 1. Check position health (LTV > preLLTV threshold)
 ├── 2. Calculate optimal repay/seize amounts using linear scaling
@@ -183,8 +199,10 @@ Keeper → PreLiquidationManager.preLiquidate()
 ├── 4. Execute partial liquidation via StrategyManager
 ├── 5. Transfer seized collateral to keeper
 └── 6. Keeper profits from liquidation bonus
+```
 
 #### Flash Loan Pre-liquidation:
+``` bash
 Keeper → PreLiquidationManager.preLiquidateWithFlashLoan()
 ├── 1. Check position health
 ├── 2. Flash loan debt tokens
@@ -192,6 +210,7 @@ Keeper → PreLiquidationManager.preLiquidateWithFlashLoan()
 ├── 4. Swap collateral to debt tokens via DEX
 ├── 5. Repay flash loan + premium
 └── 6. Send remaining profit to keeper (capital-free operation)
+```
 
 ---
 

@@ -2,7 +2,8 @@
 pragma solidity ^0.8.13;
 
 abstract contract Pausable {
-    bytes32 private constant _PAUSED_SLOT = keccak256("super.vault.paused.slot");
+    // keccak256("super.vault.paused.slot")
+    bytes32 private constant _PAUSED_SLOT = 0x77eedce51bf840ba6ca012007f77889ea2955a4d76a4d21ac395596d7c6d6a60;
 
     event Paused();
     event Unpaused();

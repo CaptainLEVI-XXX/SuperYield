@@ -23,6 +23,12 @@ abstract contract ProtocolAdapter {
         virtual
         returns (uint256 collateralUsd, uint256 debtUsd);
 
+    function getPositionUsd(address collateralToken, address debtToken, address borrower)
+        external
+        view
+        virtual
+        returns (uint256 collateralUsd, uint256 debtUsd);
+
     /**
      * @notice Get token addresses for a market
      */

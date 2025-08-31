@@ -33,7 +33,8 @@ abstract contract DexHelper {
         bytes32 identifier;
     }
 
-    bytes32 public constant ROUTE_STORAGE = keccak256("super.dex.route.storage");
+    // keccak256("super.dex.route.storage")
+    bytes32 public constant ROUTE_STORAGE = 0xb429dc2cd7dca0ad09fc04f53f39a1d9477883cca44c8231cca59f6f8f15ca69;
 
     function routeInfo() internal pure returns (RouteStorage storage _routeStorage) {
         bytes32 position = ROUTE_STORAGE;
@@ -52,9 +53,7 @@ abstract contract DexHelper {
     function updateRouteStatus(bytes32[] calldata identifier, bool[] calldata status) public virtual returns (bool) {
         uint256 length_ = identifier.length;
 
-        if ((length_ != status.length)) {
-            revert DexHelper__InvalidInput();
-        }
+        if (length_ != status.length) DexHelper__InvalidInput.selector.revertWith();
 
         for (uint256 i = 0; i < length_; i++) {
             RouteInfo storage routeInfo_ = routeInfo().routes[identifier[i]];

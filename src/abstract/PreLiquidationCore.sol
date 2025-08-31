@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {WadMath} from "../libraries/WadMath.sol";
 import {CustomRevert} from "../libraries/CustomRevert.sol";
+import {console} from "forge-std/console.sol";
 
 abstract contract PreLiquidationCore {
     using WadMath for uint256;
@@ -39,9 +40,7 @@ abstract contract PreLiquidationCore {
         PreLiquidationParams memory params
     ) public pure returns (uint256 lif, uint256 lcf) {
         // Ensure we're in valid range
-        if (currentLtv <= preLltv || currentLtv > protocolLltv) {
-            revert InvalidLTV();
-        }
+        if (currentLtv <= preLltv || currentLtv > protocolLltv) InvalidLTV.selector.revertWith();
 
         // Linear interpolation quotient: 0 at preLltv, 1 at protocolLltv
         uint256 quotient = (currentLtv - preLltv).wDiv(protocolLltv - preLltv);
@@ -58,12 +57,12 @@ abstract contract PreLiquidationCore {
      * @dev Ensures parameters maintain position health
      */
     function validateParams(PreLiquidationParams memory params, uint256 protocolLltv) public pure {
-        require(params.preLltv < protocolLltv, "preLltv >= LLTV");
-        require(params.preLCF1 <= params.preLCF2, "LCF not monotonic");
-        require(params.preLCF1 <= WadMath.WAD, "LCF1 > 100%");
-        require(params.preLIF1 >= WadMath.WAD, "LIF1 < 100%");
-        require(params.preLIF1 <= params.preLIF2, "LIF not monotonic");
-        require(params.preLIF2 <= WadMath.WAD.wDiv(protocolLltv), "LIF2 too high");
+        if (params.preLltv >= protocolLltv) InvalidLTV.selector.revertWith();
+        if (params.preLCF1 > params.preLCF2) InvalidParameters.selector.revertWith();
+        if (params.preLCF1 > WadMath.WAD) InvalidParameters.selector.revertWith();
+        if (params.preLIF1 < WadMath.WAD) InvalidParameters.selector.revertWith();
+        if (params.preLIF1 > params.preLIF2) InvalidParameters.selector.revertWith();
+        if (params.preLIF2 > WadMath.WAD.wDiv(protocolLltv)) InvalidParameters.selector.revertWith();
     }
 
     function calculateRepayAmount(
@@ -111,15 +110,16 @@ abstract contract PreLiquidationCore {
         (amounts.lif, amounts.lcf) = calculateLifLcf(currentLtv, params.preLltv, protocolLltv, params);
 
         // Calculate desired repay to reach target LTV
-        uint256 targetDebtUsd = targetLtv.wMul(collateralUsd);
-        uint256 desiredRepay = debtUsd > targetDebtUsd ? debtUsd - targetDebtUsd : 0;
+        uint256 desiredRepay = _computeDesiredRepayConsideringSeize(collateralUsd, debtUsd, targetLtv, amounts.lif);
 
         // Apply constraints
         uint256 maxByLcf = amounts.lcf.wMul(debtUsd);
         uint256 maxByPct = maxRepayPct.wMul(debtUsd);
 
         // Take minimum of all constraints
-        amounts.repayAmount = _min(desiredRepay, _min(maxByLcf, maxByPct));
+        // amounts.repayAmount = _min(desiredRepay, _min(maxByLcf, maxByPct));
+        amounts.repayAmount = desiredRepay.min(maxByLcf.min(maxByPct));
+        //862016356477903772293
 
         // Check dust threshold
         if (amounts.repayAmount < params.dustThreshold) {
@@ -130,12 +130,39 @@ abstract contract PreLiquidationCore {
 
         // Calculate collateral to seize
         amounts.seizeAmount = amounts.repayAmount.wMul(amounts.lif);
+        // console.log("================seizeAmount==============", amounts.seizeAmount);
+        // console.log("================repayAmount==============", amounts.repayAmount);
 
         // Ensure we don't seize more than available
         if (amounts.seizeAmount > collateralUsd) {
             amounts.seizeAmount = collateralUsd;
             amounts.repayAmount = amounts.seizeAmount.wDiv(amounts.lif);
         }
+    }
+
+    function _computeDesiredRepayConsideringSeize(
+        uint256 collateralUsd,
+        uint256 debtUsd,
+        uint256 targetLtv,
+        uint256 lif // WAD
+    ) internal pure returns (uint256 desiredRepay) {
+        // If already at or below target, nothing to do
+        uint256 targetDebtUsd = targetLtv.wMul(collateralUsd);
+        if (debtUsd <= targetDebtUsd) return 0;
+
+        // denominator = 1 - target * lif  (WAD arithmetic)
+        // if denominator == 0 or negative: can't reach target using seizure with this lif
+        uint256 targetTimesLif = targetLtv.wMul(lif);
+        if (targetTimesLif >= WadMath.WAD) {
+            // impossible to reach target via partial liquidation (would require infinite repay).
+            // return the naive desiredRepay (full to targetDebtUsd) — caller will later clamp by LCF / maxPct.
+            return debtUsd - targetDebtUsd;
+        }
+
+        // r = (debt - target * collateral) / (1 - target * lif)
+        uint256 numerator = debtUsd - targetDebtUsd; // > 0
+        uint256 denom = WadMath.WAD - targetTimesLif; // > 0
+        desiredRepay = numerator.wDiv(denom); // using WadMath wDiv
     }
 
     /**
@@ -150,9 +177,5 @@ abstract contract PreLiquidationCore {
      */
     function calculateKeeperProfit(uint256 seizeAmount, uint256 repayAmount) public pure returns (uint256) {
         return seizeAmount > repayAmount ? seizeAmount - repayAmount : 0;
-    }
-
-    function _min(uint256 a, uint256 b) private pure returns (uint256) {
-        return a < b ? a : b;
     }
 }

@@ -26,4 +26,10 @@ library WadMath {
             return (a * b) / d;
         }
     }
+
+    function min(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly ("memory-safe") {
+            z := xor(x, mul(xor(x, y), lt(y, x)))
+        }
+    }
 }

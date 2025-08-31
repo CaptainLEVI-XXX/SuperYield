@@ -2,20 +2,23 @@
 pragma solidity ^0.8.20;
 
 import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-import {WadMath} from "./libraries/WadMath.sol";
-import {Lock} from "./libraries/Lock.sol";
-import {Admin2Step} from "./abstract/Admin2Step.sol";
-import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
-import {IStrategyManager} from "./interfaces/IExecutionEngine.sol";
-import {IInstaFlashAggregatorInterface, IInstaFlashReceiverInterface} from "./interfaces/IInstaDappFlashLoan.sol";
-import {PreLiquidationCore} from "./abstract/PreLiquidationCore.sol";
+import {WadMath} from "../libraries/WadMath.sol";
+import {Lock} from "../libraries/Lock.sol";
+import {Admin2Step} from "../abstract/Admin2Step.sol";
+import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
+import {IStrategyManager} from "../interfaces/IExecutionEngine.sol";
+import {IInstaFlashAggregatorInterface, IInstaFlashReceiverInterface} from "../interfaces/IInstaDappFlashLoan.sol";
+import {PreLiquidationCore} from "../abstract/PreLiquidationCore.sol";
 import {Initializable} from "@solady/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@solady/utils/UUPSUpgradeable.sol";
 import {console} from "forge-std/console.sol";
-import {DexHelper} from "./abstract/DexHelper.sol";
+import {DexHelper} from "../abstract/DexHelper.sol";
+import {PreLiquidationStorage} from "./Storage.sol";
+import {CustomRevert} from "../libraries/CustomRevert.sol";
 
 contract PreLiquidationManager is
     Admin2Step,
+    PreLiquidationStorage,
     PreLiquidationCore,
     Initializable,
     UUPSUpgradeable,
@@ -24,125 +27,14 @@ contract PreLiquidationManager is
 {
     using SafeTransferLib for address;
     using WadMath for uint256;
+    using CustomRevert for bytes4;
 
     // ======================== IMMUTABLE VARIABLES ========================
 
-    /// @notice InstaDapp flash loan aggregator interface
-    /// @dev Used for executing flash loan operations when keepers don't provide capital
-    IInstaFlashAggregatorInterface public flashAggregator;
-
-    /// @notice Strategy manager contract that handles position management
-    /// @dev All liquidation operations are executed through this contract
-    IStrategyManager public strategyManager;
-
-    // ======================== STRUCTS ========================
-
-    /// @notice Configuration parameters for a specific market
-    /// @dev Contains all necessary parameters to manage pre-liquidations for a market
-    /// @param protocolId Unique identifier for the lending protocol
-    /// @param marketId Unique identifier for the specific market within the protocol
-    /// @param adapter Protocol adapter contract for interacting with the lending protocol
-    /// @param params Pre-liquidation parameters including thresholds and incentives
-    /// @param targetLtv Target loan-to-value ratio after pre-liquidation
-    /// @param maxRepayPct Maximum percentage of debt that can be repaid in one transaction
-    /// @param cooldown Minimum time between pre-liquidation actions for this market
-    /// @param lastAction Timestamp of the last pre-liquidation action
-    /// @param enabled Whether pre-liquidations are enabled for this market
-    /// @param flashLoanEnabled Whether flash loan pre-liquidations are allowed
-    struct MarketConfig {
-        uint256 positionId;
-        IProtocolAdapter adapter;
-        PreLiquidationParams params;
-        uint256 targetLtv;
-        uint256 maxRepayPct;
-        uint256 cooldown;
-        uint48 lastAction;
-        bool enabled;
-        bool flashLoanEnabled;
-    }
-
-    // /// @notice Data structure for flash loan execution
-    // /// @dev Contains all necessary information for executing a flash loan pre-liquidation
-    // /// @param marketKey Unique key identifying the market configuration
-    // /// @param keeper Address of the keeper executing the pre-liquidation
-    // /// @param seizeAmount Amount of collateral to seize (in USD)
-    // /// @param collateralToken Address of the collateral token
-    // /// @param debtToken Address of the debt token to repay
-    struct FlashLoanData {
-        bytes32 marketId;
-        address keeper;
-        uint256 seizeAmount;
-        uint256 repayAmount;
-        address collateralToken;
-        address debtToken;
-        DexSwapCalldata swapData;
-    }
-
-    // ======================== STATE VARIABLES ========================
-
-    /// @notice Mapping of market keys to their configurations
-    /// @dev Used to store and retrieve market-specific pre-liquidation settings
-    mapping(bytes32 => MarketConfig) public markets;
-
-    // ======================== EVENTS ========================
-
-    /// @notice Emitted when a pre-liquidation is successfully executed
-    /// @param marketKey Unique identifier for the market
-    /// @param keeper Address of the keeper who executed the pre-liquidation
-    /// @param ltvBefore Loan-to-value ratio before the pre-liquidation
-    /// @param ltvAfter Loan-to-value ratio after the pre-liquidation
-    /// @param repaidUsd Amount of debt repaid in USD
-    /// @param seizedUsd Amount of collateral seized in USD
-    /// @param profit Profit earned by the keeper in USD
-    event PreLiquidation(
-        bytes32 indexed marketKey,
-        address indexed keeper,
-        uint256 ltvBefore,
-        uint256 ltvAfter,
-        uint256 repaidUsd,
-        uint256 seizedUsd,
-        uint256 profit
-    );
-
-    /// @notice Emitted when a flash loan pre-liquidation is successfully executed
-    /// @param marketKey Unique identifier for the market
-    /// @param keeper Address of the keeper who executed the flash loan pre-liquidation
-    /// @param flashLoanAmount Amount borrowed via flash loan
-    /// @param profit Profit earned by the keeper
-    event FlashLiquidation(bytes32 indexed marketKey, address indexed keeper, uint256 flashLoanAmount, uint256 profit);
-
-    /// @notice Emitted when a market configuration is updated
-    /// @param marketKey Unique identifier for the market
-    /// @param positionId Position identifier
-    /// @param flashLoanEnabled Whether flash loans are enabled for this market
-    event MarketConfigured(bytes32 indexed marketKey, uint256 positionId, bool flashLoanEnabled);
-
-    // ======================== ERRORS ========================
-
-    /// @notice Thrown when caller is not an authorized keeper
-    error NotAuthorized();
-
-    /// @notice Thrown when trying to operate on a disabled market
-    error MarketNotEnabled();
-
-    /// @notice Thrown when position is not in pre-liquidation zone
-    error NotInPreLiquidationZone();
-
-    /// @notice Thrown when cooldown period is still active
-    error CooldownActive();
-
-    /// @notice Thrown when amounts are too small to execute
-    error AmountTooSmall();
-
-    /// @notice Thrown when flash loan operation fails
-    error FlashLoanFailed();
-
-    /// @notice Thrown when flash loan callback is invalid or unauthorized
-    error InvalidFlashLoanCallback();
-
     function initialize(address _strategyManager, address _flashLoanProvider, address owner) public initializer {
-        strategyManager = IStrategyManager(_strategyManager);
-        flashAggregator = IInstaFlashAggregatorInterface(_flashLoanProvider);
+        PreLiqState storage preliq = _preliqStorage();
+        preliq.strategyManager = IStrategyManager(_strategyManager);
+        preliq.flashAggregator = IInstaFlashAggregatorInterface(_flashLoanProvider);
         _setAdmin(owner);
     }
 
@@ -172,11 +64,11 @@ contract PreLiquidationManager is
 
         // Validate using core function
         validateParams(params, protocolLltv);
-        ///@notice how come this is possible
-        require(targetLtv < params.preLltv, "Target >= preLltv");
-        require(maxRepayPct <= WadMath.WAD, "Max repay > 100%");
 
-        markets[marketId] = MarketConfig({
+        if (targetLtv >= params.preLltv) TargetLtvTooHigh.selector.revertWith();
+        if (maxRepayPct > WadMath.WAD) MaxRepayPctTooHigh.selector.revertWith();
+
+        _marketStorage().markets[marketId] = MarketConfig({
             positionId: positionId,
             adapter: IProtocolAdapter(adapter),
             params: params,
@@ -196,7 +88,7 @@ contract PreLiquidationManager is
     /// @param marketId Unique identifier for the market
     /// @param enabled Whether pre-liquidations should be enabled
     function setMarketEnabled(bytes32 marketId, bool enabled) external onlyAdmin {
-        markets[marketId].enabled = enabled;
+        _marketStorage().markets[marketId].enabled = enabled;
     }
 
     // ======================== KEEPER FUNCTIONS ========================
@@ -212,18 +104,12 @@ contract PreLiquidationManager is
         external
         returns (uint256 actualRepaidUsd, uint256 actualSeizedUsd)
     {
-        // console.log("maxRepayUsd", maxRepayUsd);
-        // console.log("minSeizeUsd", minSeizeUsd);
-        MarketConfig storage config = markets[marketId];
+        MarketConfig storage config = _marketStorage().markets[marketId];
 
         _validateMarket(config);
 
         // Get position and calculate amounts
-        (LiquidationAmounts memory amounts, uint256 currentLtv, uint256 collateralUsd, uint256 debtUsd) =
-            _preparePreLiquidation(marketId);
-
-        // console.log("collateralUsd", collateralUsd);
-        // console.log("debtUsd", debtUsd);
+        (LiquidationAmounts memory amounts, uint256 currentLtv,,) = _preparePreLiquidation(marketId);
 
         // Apply keeper limits
         if (maxRepayUsd > 0 && amounts.repayAmount > maxRepayUsd) {
@@ -231,9 +117,7 @@ contract PreLiquidationManager is
             amounts.seizeAmount = amounts.repayAmount.wMul(amounts.lif);
         }
 
-        if (minSeizeUsd > 0 && amounts.seizeAmount < minSeizeUsd) {
-            revert AmountTooSmall();
-        }
+        if (minSeizeUsd > 0 && amounts.seizeAmount < minSeizeUsd) AmountTooSmall.selector.revertWith();
 
         // Execute liquidation
         (actualRepaidUsd, actualSeizedUsd) = _executeLiquidation(
@@ -258,10 +142,10 @@ contract PreLiquidationManager is
         uint16 routeForFlashLoan,
         DexSwapCalldata memory swapData
     ) external {
-        MarketConfig storage config = markets[marketId];
+        MarketConfig storage config = _marketStorage().markets[marketId];
         _validateMarket(config);
 
-        if (!config.flashLoanEnabled) revert FlashLoanFailed();
+        if (!config.flashLoanEnabled) FlashLoanFailed.selector.revertWith();
 
         // Get position and calculate amounts
         (LiquidationAmounts memory amounts,,,) = _preparePreLiquidation(marketId);
@@ -289,7 +173,9 @@ contract PreLiquidationManager is
         });
 
         // Execute flash loan
-        flashAggregator.flashLoan(toArray(debtToken), toArray(repayUnits), routeForFlashLoan, abi.encode(flashData), "");
+        _preliqStorage().flashAggregator.flashLoan(
+            toArray(debtToken), toArray(repayUnits), routeForFlashLoan, abi.encode(flashData), ""
+        );
 
         // flashLiquidate(flashData);
 
@@ -313,12 +199,13 @@ contract PreLiquidationManager is
         address initiator,
         bytes calldata params
     ) external returns (bool) {
-        if (msg.sender != address(flashAggregator)) revert InvalidFlashLoanCallback();
-        if (initiator != address(this)) revert InvalidFlashLoanCallback();
+        address flashAggregator = address(_preliqStorage().flashAggregator);
+        if (msg.sender != flashAggregator) InvalidFlashLoanCallback.selector.revertWith();
+        if (initiator != address(this)) InvalidFlashLoanCallback.selector.revertWith();
 
         FlashLoanData memory flashData = abi.decode(params, (FlashLoanData));
 
-        MarketConfig storage config = markets[flashData.marketId];
+        MarketConfig storage config = _marketStorage().markets[flashData.marketId];
 
         // Calculate amounts in USD
         uint256 repayUsd = config.adapter.tokenUnitsToUsd(flashData.debtToken, amounts[0]);
@@ -333,7 +220,7 @@ contract PreLiquidationManager is
         // console.log("+++++++++++++repayUsd", repayUsd);
         // console.log("+++++++++++++flashData.seizeAmount", flashData.seizeAmount);
         // Execute the actual liquidation
-        (uint256 actualRepaidUsd, uint256 actualSeizedUsd) = _executeLiquidation(
+        (, uint256 actualSeizedUsd) = _executeLiquidation(
             flashData.marketId,
             config,
             liquidationAmounts,
@@ -398,7 +285,7 @@ contract PreLiquidationManager is
             uint256 expectedProfit
         )
     {
-        MarketConfig memory config = markets[marketKey];
+        MarketConfig memory config = _marketStorage().markets[marketKey];
         if (!config.enabled) return (false, 0, 0, 0, 0, 0, 0);
 
         try this.getPositionData(marketKey) returns (uint256 collateralUsd, uint256 debtUsd, uint256 protocolLltv) {
@@ -439,9 +326,8 @@ contract PreLiquidationManager is
         view
         returns (uint256 collateralUsd, uint256 debtUsd, uint256 protocolLltv)
     {
-        MarketConfig memory config = markets[marketId];
-        // can do a batch call for gas saving
-        (collateralUsd, debtUsd) = config.adapter.getPositionUsd(marketId, address(strategyManager));
+        MarketConfig memory config = _marketStorage().markets[marketId];
+        (collateralUsd, debtUsd) = config.adapter.getPositionUsd(marketId, address(_preliqStorage().strategyManager));
         protocolLltv = config.adapter.lltv(marketId);
     }
 
@@ -459,12 +345,12 @@ contract PreLiquidationManager is
         view
         returns (LiquidationAmounts memory amounts, uint256 currentLtv, uint256 collateralUsd, uint256 debtUsd)
     {
-        MarketConfig memory config = markets[marketId];
+        MarketConfig memory config = _marketStorage().markets[marketId];
 
         // Get current position
-        (collateralUsd, debtUsd) = config.adapter.getPositionUsd(marketId, address(strategyManager));
+        (collateralUsd, debtUsd) = config.adapter.getPositionUsd(marketId, address(_preliqStorage().strategyManager));
 
-        if (collateralUsd == 0 || debtUsd == 0) revert AmountTooSmall();
+        if (collateralUsd == 0 || debtUsd == 0) AmountTooSmall.selector.revertWith();
 
         // Calculate LTV
         currentLtv = debtUsd.wDiv(collateralUsd);
@@ -472,7 +358,7 @@ contract PreLiquidationManager is
 
         // Check if in pre-liquidation zone
         if (!isPreLiquidatable(currentLtv, config.params.preLltv, protocolLltv)) {
-            revert NotInPreLiquidationZone();
+            NotInPreLiquidationZone.selector.revertWith();
         }
 
         // Calculate optimal amounts using core function
@@ -496,6 +382,7 @@ contract PreLiquidationManager is
         address keeper,
         bool isFlashLoan
     ) internal returns (uint256 actualRepaidUsd, uint256 actualSeizedUsd) {
+        PreLiqState storage preliqStorage = _preliqStorage();
         // Get tokens
         (address collateralToken, address debtToken) = config.adapter.getTokens(marketId);
 
@@ -509,13 +396,10 @@ contract PreLiquidationManager is
         }
 
         // Approve strategy manager
-        debtToken.safeApprove(address(strategyManager), repayUnits);
-
-        console.log("repayUnits", repayUnits);
-        console.log("seizeUnits", seizeUnits);
+        debtToken.safeApprove(address(preliqStorage.strategyManager), repayUnits);
 
         // Execute through strategy manager
-        (uint256 actualRepaid, uint256 actualSeized) = strategyManager.executePreLiquidation(
+        (uint256 actualRepaid, uint256 actualSeized) = preliqStorage.strategyManager.executePreLiquidation(
             config.positionId, repayUnits, seizeUnits, isFlashLoan ? address(this) : keeper
         );
 
@@ -528,10 +412,8 @@ contract PreLiquidationManager is
     /// @dev Internal function to ensure market is operational and cooldown is respected
     /// @param config Market configuration to validate
     function _validateMarket(MarketConfig memory config) internal view {
-        if (!config.enabled) revert MarketNotEnabled();
-        if (block.timestamp < config.lastAction + config.cooldown) {
-            revert CooldownActive();
-        }
+        if (!config.enabled) MarketNotEnabled.selector.revertWith();
+        if (block.timestamp < config.lastAction + config.cooldown) CooldownActive.selector.revertWith();
     }
 
     /// @notice Finalizes liquidation by updating state and emitting events
@@ -554,7 +436,7 @@ contract PreLiquidationManager is
 
         // Calculate new LTV
         (uint256 newCollateralUsd, uint256 newDebtUsd) =
-            config.adapter.getPositionUsd(marketId, address(strategyManager));
+            config.adapter.getPositionUsd(marketId, address(_preliqStorage().strategyManager));
         uint256 ltvAfter = newDebtUsd > 0 ? newDebtUsd.wDiv(newCollateralUsd) : 0;
 
         // Calculate and track profit

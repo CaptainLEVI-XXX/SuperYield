@@ -10,12 +10,13 @@ import {SuperVault} from "../src/SuperVault.sol";
 import {EthVaultWrapper} from "../src/EthWrapper.sol";
 import {UniversalLendingWrapper} from "../src/UniversalLendingWrapper.sol";
 import {AssetVaultWrapper} from "../src/AssetWrapper.sol";
-import {StrategyManager} from "../src/ExecutionEngine.sol";
-import {PreLiquidationManager} from "../src/PreLiquidation.sol";
+import {StrategyManager} from "../src/engine/ExecutionEngine.sol";
+import {PreLiquidationManager} from "../src/liquidation/PreLiquidation.sol";
 import {IUniswapV3Router} from "../src/interfaces/IUniswapV3Router.sol";
 import {DexHelper} from "../src/abstract/DexHelper.sol";
 import {AaveV3Adapter} from "../src/adapter/AaveV3.sol";
 import {OracleAggregator} from "../src/OracleAgg.sol";
+import {PreLiquidationCore} from "../src/abstract/PreLiquidationCore.sol";
 
 abstract contract BaseTest is Test, AddressInfo {
     using SafeTransferLib for address;
@@ -42,6 +43,8 @@ abstract contract BaseTest is Test, AddressInfo {
         _deployUniversalLendingWrapper();
         _deployPreLiquidationManager();
         _deployOracleAggregator();
+        _deployAaveAdapter();
+        _registerMarketIdForAave();
         // build the initialization data for the protocol
         _setUpInitializationData();
 
@@ -96,8 +99,8 @@ abstract contract BaseTest is Test, AddressInfo {
         oracleAggregator = new OracleAggregator(admin);
     }
 
-    function deployAaveAdapter() internal {
-        aaveAdapter = new AaveV3Adapter(AAVE_DATA_PROVIDER, address(oracleAggregator)); //replace it by oracle address);
+    function _deployAaveAdapter() internal {
+        aaveAdapter = new AaveV3Adapter(AAVE_DATA_PROVIDER, address(oracleAggregator), admin); //replace it by oracle address);
     }
 
     function _setUpInitializationData() internal {
@@ -108,9 +111,9 @@ abstract contract BaseTest is Test, AddressInfo {
 
         strategyManager.whitelistRoute("UniswapV3", UniswapV3);
 
-        strategyManager.registerVenue(AAVE_V3_POOL, 0);
-        strategyManager.registerVenue(COMPOUND_V3_USDC, 2);
-        strategyManager.registerVenue(MORPHO_AAVE, 4);
+        strategyManager.registerVenue(AAVE_V3_POOL, 0, address(aaveAdapter));
+        strategyManager.registerVenue(COMPOUND_V3_USDC, 2, address(0));
+        strategyManager.registerVenue(MORPHO_AAVE, 4, address(0));
 
         //aseetWrapper
         assetWrapper.whitelistRoute("UniswapV3", UniswapV3);
@@ -118,6 +121,7 @@ abstract contract BaseTest is Test, AddressInfo {
         ethWrapper.whitelistRoute("UniswapV3", UniswapV3);
         // PreLiquidationManager
         preLiquidationManager.initialize(address(strategyManager), INSTADAPP_FLASHLOAN, admin);
+        preLiquidationManager.whitelistRoute("UniswapV3", UniswapV3);
         console.log("PreLiquidationManager initialized");
 
         oracleAggregator.whitelistOracle(ETH_USD, true);
@@ -158,6 +162,11 @@ abstract contract BaseTest is Test, AddressInfo {
         vm.stopPrank();
     }
 
+    function _registerMarketIdForAave() internal {
+        vm.prank(admin);
+        marketId = aaveAdapter.registerMarket(USDC, WETH);
+    }
+
     function _buildSwapParams(address tokenIn, address tokenOut, uint256 amountIn, address receiver)
         internal
         view
@@ -181,6 +190,29 @@ abstract contract BaseTest is Test, AddressInfo {
             swapCalldata: swapData,
             identifier: keccak256(abi.encodePacked("UniswapV3", UniswapV3))
         });
+    }
+
+    function _configurePreLiquidationMarket(bool flashLoanEnabled) internal {
+        PreLiquidationCore.PreLiquidationParams memory params = PreLiquidationCore.PreLiquidationParams({
+            preLltv: 0.75e18, // Start pre-liquidation at 80% LTV
+            preLCF1: 0.05e18, // 5% close factor at preLltv
+            preLCF2: 0.5e18, // 50% close factor at protocol LLTV
+            preLIF1: 1.02e18, // 2% incentive at preLltv
+            preLIF2: 1.1e18, // 10% incentive at protocol LLTV
+            dustThreshold: 100e6 // $100 minimum
+        });
+
+        vm.prank(admin);
+        preLiquidationManager.configureMarket(
+            marketId,
+            1,
+            address(aaveAdapter),
+            params,
+            0.7e18, // targetLtv: 70%
+            0.5e18, // maxRepayPct: 50% max repay per tx
+            300, // cooldown: 5 minutes
+            flashLoanEnabled // enableFlashLoan
+        );
     }
 
     function _dealBobAndAlice() internal {

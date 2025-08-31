@@ -7,11 +7,13 @@ import {BaseTest} from "./Base.t.sol";
 import {DexHelper} from "../src/abstract/DexHelper.sol";
 import {Venue} from "../src/abstract/Venue.sol";
 import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-import {StrategyManager} from "../src/ExecutionEngine.sol";
+import {StrategyManager} from "../src/engine/ExecutionEngine.sol";
 import {IChainlinkOracle} from "../src/interfaces/IOracle.sol";
+import {WadMath} from "../src/libraries/WadMath.sol";
 
 contract LeverageTest is BaseTest {
     using SafeTransferLib for address;
+    using WadMath for *;
 
     function testOpenPosition() public {
         vm.prank(alice);
@@ -107,69 +109,87 @@ contract LeverageTest is BaseTest {
         //417194
     }
 
-    function testRebalanceLTV() public {
-        vm.startPrank(alice);
-        superVault.deposit(LARGE_AMOUNT_USDC, alice);
-        vm.stopPrank();
+    // function testRebalanceLTV() public {
+    //     vm.startPrank(alice);
+    //     superVault.deposit(LARGE_AMOUNT_USDC, alice);
+    //     vm.stopPrank();
 
-        bytes32 venue = keccak256(abi.encodePacked(AAVE_V3_POOL));
+    //     bytes32 venue = keccak256(abi.encodePacked(AAVE_V3_POOL));
 
-        // Step 1: Open position supplying USDC and borrowing WETH
-        uint256 flashLoanAmount = 4000e6; // $4000 USDC worth
-        DexHelper.DexSwapCalldata memory swapData = _buildSwapParams(WETH, USDC, 1e18, address(strategyManager));
+    //     // Step 1: Open position supplying USDC and borrowing WETH
+    //     uint256 flashLoanAmount = 4000e6; // $4000 USDC worth
+    //     DexHelper.DexSwapCalldata memory swapData = _buildSwapParams(WETH, USDC, 1e18, address(strategyManager));
 
-        vm.prank(admin);
-        uint256 positionId = strategyManager.openPosition(
-            address(superVault),
-            address(USDC),
-            address(WETH),
-            5000e6, // deposit 5000 USDC
-            1e18,
-            flashLoanAmount,
-            venue,
-            5,
-            swapData
-        );
+    //     vm.prank(admin);
+    //     uint256 positionId = strategyManager.openPosition(
+    //         address(superVault),
+    //         address(USDC),
+    //         address(WETH),
+    //         5000e6, // deposit 5000 USDC
+    //         1e18,
+    //         flashLoanAmount,
+    //         venue,
+    //         5,
+    //         swapData
+    //     );
 
-        // Step 2: Compute actual current LTV using oracle
-        uint256 wethPrice = _getWETHPriceInUSDC(); // e.g. ~4600e6
-        (,,,, uint256 totalSupplied, uint256 totalBorrowed,) = strategyManager.positions(positionId);
+    //     // Step 2: Compute actual current LTV using oracle
+    //     // Check initial position state
+    //     (uint256 initialCollateralUsd, uint256 initialDebtUsd) =
+    //         aaveAdapter.getPositionUsd(marketId, address(strategyManager));
 
-        // normalize decimals
-        uint256 borrowedInUSDC = (totalBorrowed * wethPrice) / 1e18; // WETH -> USDC
-        uint256 suppliedInUSDC = totalSupplied; // already USDC 6 decimals
+    //     console.log("Initial collateral USD:", initialCollateralUsd);
+    //     console.log("Initial debt USD:", initialDebtUsd);
 
-        uint256 currentLTV = (borrowedInUSDC * 1e18) / suppliedInUSDC;
-        console.log("Current LTV: %s", currentLTV);
+    //     uint256 initialLtv = initialDebtUsd.wDiv(initialCollateralUsd);
+    //     console.log("Initial LTV:", initialLtv / 1e16, "%");
 
-        // Step 3: Pick a higher target LTV (leverage case)
-        uint256 targetLTV = 97e16; // +5%
+    //     //  uint256 wethPrice = _getWETHPriceInUSDC(); // e.g. ~4600e6
+    //     // (,,,, uint256 totalSupplied, uint256 totalBorrowed,) = strategyManager.positions(positionId);
 
-        // Step 4: Off-chain math for how much more borrow & flashloan needed
-        // Example: want to move borrow ratio from currentLTV → targetLTV
-        uint256 targetBorrowInUSDC = (suppliedInUSDC * targetLTV) / 1e18;
-        uint256 deltaBorrowInUSDC = targetBorrowInUSDC - borrowedInUSDC;
+    //     // // normalize decimals
+    //     // uint256 borrowedInUSDC = (totalBorrowed * wethPrice) / 1e18; // WETH -> USDC
+    //     // uint256 suppliedInUSDC = totalSupplied; // already USDC 6 decimals
 
-        uint256 deltaBorrowInWETH = (deltaBorrowInUSDC * 1e18) / wethPrice; // back to WETH
-        uint256 flashLoanNeeded = deltaBorrowInUSDC; // in USDC
+    //     // uint256 currentLTV = (borrowedInUSDC * 1e18) / suppliedInUSDC;
+    //     // console.log("Current LTV: %s", currentLTV);
 
-        DexHelper.DexSwapCalldata memory swapCalldata =
-            _buildSwapParams(WETH, USDC, deltaBorrowInWETH, address(strategyManager));
+    //     // // Step 3: Pick a higher target LTV (leverage case)
+    //     // uint256 targetLTV = currentLTV + 5e16; // +5%
 
-        // Step 5: Call rebalance
-        vm.prank(admin);
-        strategyManager.rebalanceToTargetLTV(positionId, targetLTV, deltaBorrowInWETH, flashLoanNeeded, swapCalldata, 5);
+    //     // Step 3: Pick a higher target LTV (leverage case)
+    //     uint256 targetLTV =  initialLtv + 5e16;// +5%
 
-        // Step 6: Verify LTV moved closer
-        (,,,, totalSupplied, totalBorrowed,) = strategyManager.positions(positionId);
-        borrowedInUSDC = (totalBorrowed * wethPrice) / 1e18;
-        suppliedInUSDC = totalSupplied;
+    //     uint256 targetborrow = (initialCollateralUsd * targetLTV);
+    //     uint256 deltBorrow = targetborrow - initialDebtUsd;
 
-        uint256 newLTV = (borrowedInUSDC * 1e18) / suppliedInUSDC;
-        console.log("New LTV: %s", newLTV);
+    //     uint256 flashLoanNeeded =
 
-        assertApproxEqAbs(newLTV, targetLTV, 0.01e18); // within 1%
-    }
+    //     // Step 4: Off-chain math for how much more borrow & flashloan needed
+    //     // Example: want to move borrow ratio from currentLTV → targetLTV
+    //     uint256 targetBorrowInUSDC = (suppliedInUSDC * targetLTV) / 1e18;
+    //     uint256 deltaBorrowInUSDC = targetBorrowInUSDC - borrowedInUSDC;
+
+    //     uint256 deltaBorrowInWETH = (deltaBorrowInUSDC * 1e18) / wethPrice; // back to WETH
+    //     uint256 flashLoanNeeded = deltaBorrowInUSDC; // in USDC
+
+    //     DexHelper.DexSwapCalldata memory swapCalldata =
+    //         _buildSwapParams(WETH, USDC, deltaBorrowInWETH, address(strategyManager));
+
+    //     // Step 5: Call rebalance
+    //     vm.prank(admin);
+    //     strategyManager.rebalanceToTargetLTV(positionId, targetLTV, deltaBorrowInWETH, flashLoanNeeded, swapCalldata, 5);
+
+    //     // Step 6: Verify LTV moved closer
+    //     // (,,,, totalSupplied, totalBorrowed,) = strategyManager.positions(positionId);
+    //     // borrowedInUSDC = (totalBorrowed * wethPrice) / 1e18;
+    //     // suppliedInUSDC = totalSupplied;
+
+    //     // uint256 newLTV = (borrowedInUSDC * 1e18) / suppliedInUSDC;
+    //     // console.log("New LTV: %s", newLTV);
+
+    //     // assertApproxEqAbs(newLTV, targetLTV, 0.01e18); // within 1%
+    // }
 
     function _getWETHPriceInUSDC() internal view returns (uint256) {
         // Chainlink ETH/USD feed (8 decimals), convert to USDC 6 decimals

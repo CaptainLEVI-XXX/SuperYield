@@ -1,3 +1,69 @@
+#### Architecture Design
+
+- How InstaDapp Lite works:
+    - instadapp is not open-source but after debugging several transaction via etherscan, I found that it have only A single main contract that has all the logic of ERC4626 + performs leverage logic with flashLoan within integrated platforms.
+    - Possible explanation is this design is gas saver(as less components -> less interaction -> save gass).
+    - Vault is customized for the startegy that they have built. for ex: currently they are supporting westh/ETH ...and this stratsgy vault
+    logic design in a way that it can perform good yields.
+    - so their design is probably not modular but customized for their strategy , and I think it is a good approach because while building a startegy vault we always go for better yield and gas efficiency.
+
+ - How Super Yield (Assignment) works:
+
+ - In a nutshell , user can deposit asset in the vault, execution Engine takes the vault fund to invest it in appropriate protocols to create looping leverage psoition with flashloan.Where to invest? This answer must be provided by the backend. contract is only responsible for investing not for underlying logic behind investing as it would be become a complex contract .Less core , less bugs.
+ _ we also have a preLiquidationManager that is responsible for pre-liquidation of the position to maintain optimal LTV.It uses the same logic as moprho blue pre-liquidation system.but it can support any protocol.
+
+ - It consist of three main components Supervault: responsible for handling user deposit/withdraw,Execution Engine: responsible for performing leverage logic with flashLoan within integrated platforms and PreLiquidationManager: responsible for pre-liquidation of the position to maintain optimal LTV.
+
+ - SuperVault: ERC4626 + Reserve(instant withdrawals) + Batch;
+    - Deposit Flow (wstETH/Eth): 
+        - User can approve and deposit wstETH directly to vault.
+        - In case if user has Eth then EthWrapper can be used for deposit into the vault.
+        - After the deposit vault funds stays in the vault unless execution engine calls vault for funds.
+    - Withdraw Flow:
+        - User can directly withdraw wstETH from vault, In case if he depsoited Eth then EthWrapper can be used for withdraw equivalent Eth deposited.
+        - for instant withdrawals Super vault use its reserve.
+        - If the reserve is burn out , user need to add a request for withdrawals in queue.
+        - Admin need to process the queue and request funds from Execution Engine.
+        - After that user can claim the withdrawals. 
+
+ - Execution Engine is responsible for performing leverage logic with flashLoan within integrated platforms.It is built in such a way that it can 
+ support multiple protocols and used Instadapp flashLoan aggregator for flashLoan.
+ It has functions like open position , close position , rebalance (migrate position to different protocol), and rebalanceToTargetLTV.
+
+
+ - one point of design may be to seprate the Looping logic with Position manager i.e. we can have two contract one for position manager and other for perform Looping. I didnot choose this design ...because there were some depenecy of Looping with the position that were created and it would have increase the gas price of the system. Currently Execution Engine is single contract.
+
+- ULW : Universal Lending Wrapper: This is just a wrapper contract that can be used to build calldata for different lending protocols (low-level assembly for optimization).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #### Pre-Liquidation System
 
 - This pre-liquidation system is isnpired from morpho-blue pre-liquidation system, but its extended for multiple protocols with some extra features.

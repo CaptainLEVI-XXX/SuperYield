@@ -7,6 +7,11 @@ interface IProtocolAdapter {
         view
         returns (uint256 collateralUsd, uint256 debtUsd);
 
+    function getPositionUsd(address collateralToken, address debtToken, address borrower)
+        external
+        view
+        returns (uint256 collateralUsd, uint256 debtUsd);
+
     function getTokens(bytes32 marketId) external view returns (address collateralToken, address debtToken);
 
     function usdToTokenUnits(address token, uint256 usdAmount) external view returns (uint256);

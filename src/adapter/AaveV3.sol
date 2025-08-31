@@ -5,12 +5,14 @@ import {IERC20Metadata} from "../interfaces/IERC20Metadata.sol";
 import {IPoolDataProvider} from "../interfaces/IAavePoolV3.sol";
 import {IOracle} from "../interfaces/IOracle.sol";
 import {ProtocolAdapter} from "./BaseAdapter.sol";
+import {Admin2Step} from "../abstract/Admin2Step.sol";
+import {console} from "forge-std/console.sol";
 
 /**
  * @title AaveV3Adapter
  * @notice Adapter for reading Aave V3 positions
  */
-contract AaveV3Adapter is ProtocolAdapter {
+contract AaveV3Adapter is ProtocolAdapter, Admin2Step {
     IPoolDataProvider public immutable dataProvider;
     IOracle public immutable oracle;
 
@@ -21,17 +23,28 @@ contract AaveV3Adapter is ProtocolAdapter {
 
     mapping(bytes32 => MarketInfo) public markets;
 
-    constructor(address _dataProvider, address _oracle) {
+    constructor(address _dataProvider, address _oracle, address _owner) {
         dataProvider = IPoolDataProvider(_dataProvider);
         oracle = IOracle(_oracle);
+        _setAdmin(_owner);
     }
 
-    function registerMarket(bytes32 marketId, address collateralToken, address debtToken) external {
+    function registerMarket(address collateralToken, address debtToken) external onlyAdmin returns (bytes32 marketId) {
+        marketId = keccak256(abi.encodePacked(collateralToken, debtToken, "AaveV3"));
         markets[marketId] = MarketInfo({collateralToken: collateralToken, debtToken: debtToken});
     }
 
-    function getPositionUsd(bytes32 marketId, address borrower)
+    function getPositionUsd(address collateralToken, address debtToken, address borrower)
         external
+        view
+        override
+        returns (uint256 collateralUsd, uint256 debtUsd)
+    {
+        return getPositionUsd(keccak256(abi.encodePacked(collateralToken, debtToken, "AaveV3")), borrower);
+    }
+
+    function getPositionUsd(bytes32 marketId, address borrower)
+        public
         view
         override
         returns (uint256 collateralUsd, uint256 debtUsd)
@@ -46,8 +59,8 @@ contract AaveV3Adapter is ProtocolAdapter {
         uint256 totalDebt = stableDebt + variableDebt;
 
         // Convert to USD using Aave's oracle
-        uint256 collateralPrice = oracle.getAssetPrice(market.collateralToken);
-        uint256 debtPrice = oracle.getAssetPrice(market.debtToken);
+        uint256 collateralPrice = oracle.getPrice(market.collateralToken, address(0));
+        uint256 debtPrice = oracle.getPrice(market.debtToken, address(0));
 
         uint8 collateralDecimals = IERC20Metadata(market.collateralToken).decimals();
         uint8 debtDecimals = IERC20Metadata(market.debtToken).decimals();
@@ -61,15 +74,20 @@ contract AaveV3Adapter is ProtocolAdapter {
         return (market.collateralToken, market.debtToken);
     }
 
-    function usdToTokenUnits(address token, uint256 usdAmount) external view override returns (uint256) {
-        uint256 price = oracle.getAssetPrice(token);
+    function usdToTokenUnits(address token, uint256 usdAmount18) external view override returns (uint256) {
+        // usdAmount18 is always in 18 decimals
+        uint256 price = oracle.getPrice(token, address(0)); // 18 decimals
         uint8 decimals = IERC20Metadata(token).decimals();
-        return (usdAmount * (10 ** decimals)) / price;
+
+        // (usd * 10^decimals) / price
+        return (usdAmount18 * (10 ** decimals)) / price;
     }
 
     function tokenUnitsToUsd(address token, uint256 units) external view override returns (uint256) {
-        uint256 price = oracle.getAssetPrice(token);
+        uint256 price = oracle.getPrice(token, address(0)); // 18 decimals
         uint8 decimals = IERC20Metadata(token).decimals();
+
+        // returns 18 decimals USD
         return (units * price) / (10 ** decimals);
     }
 

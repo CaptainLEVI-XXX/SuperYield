@@ -4,10 +4,12 @@ pragma solidity ^0.8.20;
 import {IChainlinkOracle, IUniswapV3Pool, IOracle} from "./interfaces/IOracle.sol";
 import {CustomRevert} from "./libraries/CustomRevert.sol";
 import {TickMath} from "./libraries/TickMath.sol";
+import {WadMath} from "./libraries/WadMath.sol";
 
 contract OracleAggregator {
     using TickMath for int24;
     using CustomRevert for bytes4;
+    using WadMath for uint256;
 
     enum OracleType {
         Chainlink,
@@ -149,7 +151,7 @@ contract OracleAggregator {
 
             uint8 decimals = oracle.decimals();
             // forge-lint: disable-next-line(unsafe-typecast)
-            price = uint256(answer) * WAD / (10 ** decimals);
+            price = uint256(answer) * WadMath.WAD / (10 ** decimals);
             return (price, true);
         } catch {
             return (0, false);
@@ -199,7 +201,7 @@ contract OracleAggregator {
     function _calculateDeviation(uint256 price1, uint256 price2) internal pure returns (uint256) {
         uint256 diff = price1 > price2 ? price1 - price2 : price2 - price1;
         uint256 avg = (price1 + price2) / 2;
-        return diff * WAD / avg;
+        return diff * WadMath.WAD / avg;
     }
 
     function _getQuoteAtTick(int24 tick, address baseToken, address token0) internal pure returns (uint256 quote) {
@@ -209,10 +211,10 @@ contract OracleAggregator {
         // Calculate price based on token ordering
         if (baseToken == token0) {
             // price = (sqrtRatioX96 / 2^96)^2
-            quote = sqrtRatioX96AsUint256 * sqrtRatioX96AsUint256 * WAD >> 192;
+            quote = sqrtRatioX96AsUint256 * sqrtRatioX96AsUint256 * WadMath.WAD >> 192;
         } else {
             // price = 1 / (sqrtRatioX96 / 2^96)^2
-            quote = (1 << 192) * WAD / (sqrtRatioX96AsUint256 * sqrtRatioX96AsUint256);
+            quote = (1 << 192) * WadMath.WAD / (sqrtRatioX96AsUint256 * sqrtRatioX96AsUint256);
         }
     }
 
@@ -226,6 +228,6 @@ contract OracleAggregator {
         uint256 collateralUsd = this.getPrice(collateral, USD);
         uint256 debtUsd = this.getPrice(debt, USD);
 
-        return collateralUsd * WAD / debtUsd;
+        return collateralUsd * WadMath.WAD / debtUsd;
     }
 }

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-/// Oracle returns price to convert collateral units into debt-asset units. Scaled to 1e18.
 interface IOracle {
-    function getAssetPrice(address asset) external view returns (uint256);
+    function getPrice(address base, address quote) external view returns (uint256 price);
 }
 
 interface IUniswapV3Pool {
@@ -21,8 +20,4 @@ interface IChainlinkOracle {
         view
         returns (uint80 roundId, int256 price, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
     function decimals() external view returns (uint8);
-}
-
-interface ICustomOracle {
-    function getPrice(address base, address quote) external view returns (uint256);
 }

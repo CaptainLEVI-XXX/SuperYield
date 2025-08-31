@@ -9,18 +9,9 @@ interface IExecutionEngine {
 }
 
 interface IStrategyManager {
-    function executePreLiquidation(
-        bytes32 protocolId,
-        bytes32 marketId,
-        address debtToken,
-        address collateralToken,
-        uint256 repayAmount,
-        uint256 seizeAmount,
-        address keeper
-    ) external returns (uint256 actualRepaid, uint256 actualSeized);
-
-    function getPosition(bytes32 protocolId, bytes32 marketId)
+    function executePreLiquidation(uint256 positionId, uint256 repayAmount, uint256 seizeAmount, address keeper)
         external
-        view
-        returns (uint256 collateral, uint256 debt);
+        returns (uint256, uint256);
+
+    function getPosition(uint256 positionId) external view returns (uint256 collateral, uint256 debt);
 }

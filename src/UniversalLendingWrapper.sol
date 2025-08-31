@@ -31,7 +31,7 @@ contract UniversalLendingWrapper {
         borrowData = _getCalldata(borrowAsset, borrowAmount, receiver, BORROW, protocol);
     }
 
-    //batch function for repay + withdraw 
+    //batch function for repay + withdraw
     function getBatchRepayWithdraw(
         address repayAsset,
         uint256 repayAmount,

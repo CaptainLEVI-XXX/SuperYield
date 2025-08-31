@@ -53,4 +53,6 @@ abstract contract AddressInfo {
 
     // Uniswap V3 pool WETH/USDC 0.05%
     address constant WETH_USDC_V3_POOL = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
+
+    bytes32 public marketId;
 }

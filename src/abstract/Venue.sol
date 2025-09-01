@@ -16,7 +16,8 @@ abstract contract Venue {
         mapping(bytes32 => VenueInfo) venues;
     }
     // keccak256("superyield.venue.storage")
-    bytes32 public constant VENUE_STORAGE_POSITION =0xa44cd558ff4abd55ee3c3c199924a9a5bd7c3b20a558e2a057c2f0cd990edde7;
+
+    bytes32 public constant VENUE_STORAGE_POSITION = 0xa44cd558ff4abd55ee3c3c199924a9a5bd7c3b20a558e2a057c2f0cd990edde7;
 
     function _venueStorage() internal pure returns (VenueStorage storage venueStorage) {
         bytes32 position = VENUE_STORAGE_POSITION;

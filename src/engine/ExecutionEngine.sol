@@ -79,8 +79,9 @@ contract StrategyManager is
 
         if (!venueInfo.venues[venue].active) InvalidCaller.selector.revertWith();
         if (!vaultInfo.vaults[vault]) InvalidCaller.selector.revertWith();
-
-        positionId = ++pos.nextPositionId;
+        unchecked {
+            positionId = ++pos.nextPositionId;
+        }
 
         vaultInfo.vaultPositions[vault].push(positionId);
 

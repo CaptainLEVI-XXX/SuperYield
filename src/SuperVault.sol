@@ -294,7 +294,10 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         uint256 currentIdle = _getAvailableIdle();
 
         if (currentIdle < assets) {
-            uint256 shortfall = assets - currentIdle;
+            uint256 shortfall;
+            unchecked {
+                shortfall = assets - currentIdle;
+            }
             _recallFromEngine(shortfall);
         }
     }

@@ -8,13 +8,9 @@ import {ProtocolAdapter} from "./BaseAdapter.sol";
 import {Admin2Step} from "../abstract/Admin2Step.sol";
 import {console} from "forge-std/console.sol";
 
-/**
- * @title AaveV3Adapter
- * @notice Adapter for reading Aave V3 positions
- */
 contract AaveV3Adapter is ProtocolAdapter, Admin2Step {
     IPoolDataProvider public immutable dataProvider;
-    IOracle public immutable oracle;
+    IOracle public oracle;
 
     struct MarketInfo {
         address collateralToken;
@@ -95,5 +91,9 @@ contract AaveV3Adapter is ProtocolAdapter, Admin2Step {
         MarketInfo memory market = markets[marketId];
         (,, uint256 liquidationThreshold,,,,,,,) = dataProvider.getReserveConfigurationData(market.collateralToken);
         return liquidationThreshold * 1e14; // Convert BPS to WAD
+    }
+
+    function setOracle(address _oracle) external onlyAdmin {
+        oracle = IOracle(_oracle);
     }
 }

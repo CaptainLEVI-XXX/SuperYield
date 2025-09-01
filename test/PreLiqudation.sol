@@ -104,6 +104,13 @@ contract PreLiquidationTest is BaseTest {
         assertLt(finalCollateralUsd, initialCollateralUsd, "Collateral should decrease");
         assertLt(finalDebtUsd, initialDebtUsd, "Debt should decrease");
     }
+    // 595455 , optimizer runs: 200
+    // 594134 , optimizer runs: 1000
+    // 593958 , optimizer runs: 2000
+    // 592002 , optimizer runs: 10000
+    // 591225 , optimizer runs: 100000
+    // 591225 , optimizer runs: 1000000
+    // 591225 , optimizer runs: 100000
 
     function testPreLiquidateWithFlashLoan() public {
         // Open position at high LTV

@@ -17,6 +17,7 @@ import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IERC20Metadata} from "../interfaces/IERC20Metadata.sol";
 import {console} from "forge-std/console.sol";
 import {ExecutionStorage} from "./Storage.sol";
+import {ISuperVault} from "../interfaces/ISuperVault.sol";
 
 contract StrategyManager is
     ExecutionStorage,
@@ -93,7 +94,7 @@ contract StrategyManager is
             swapCalldata: swapData
         });
 
-        supplyAsset.safeTransferFrom(vault, address(this), supplyAmount);
+        ISuperVault(vault).provideFundsToEngine(supplyAmount);
 
         leverage(leverageData, routeForFlashLoan);
 
@@ -130,6 +131,7 @@ contract StrategyManager is
         DeleverageData memory deleverageData = DeleverageData({
             supplyAsset: position.supplyAsset,
             borrowAsset: position.borrowAsset,
+            vault: position.vault,
             venue: position.currentVenue,
             repayAmount: repayAmount,
             withdrawAmount: withdrawAmount,
@@ -142,82 +144,6 @@ contract StrategyManager is
         emit PositionClosed(positionId, position.totalSupplied);
     }
 
-    /// @notice Move a position to a target LTV in a single flash-backed operation.
-    /// @dev Caller must provide flashLoanAmount denominated in supplyAsset (since leverage() flashloans supplyAsset),
-    ///      and borrowAmount denominated in borrowAsset (the amount to borrow from the venue after supplying).
-    ///      swapData for leverage MUST be borrowAsset -> supplyAsset (amountIn == borrowAmount).
-
-    // if I want the LTV to increase I need to borrow more
-    // -borrowAmount.
-    // - I dont need any funds since I just need to increase the ltv : LTV = debt/collateral;
-    // - flashLoanAmount.
-    // if i want LTV to decrease I need to repay
-    // function rebalanceToTargetLTV(
-    //     uint256 positionId,
-    //     uint256 targetLTV, // 1e18 precision
-    //     uint256 borrowAmount, // borrowAsset units needed to reach target (computed off-chain)
-    //     uint256 flashLoanAmount, // supplyAsset units to flashLoan (computed off-chain)
-    //     DexSwapCalldata calldata swapData, // should be borrowAsset -> supplyAsset when leveraging; opposite for deleveraging
-    //     uint16 routeForFlashLoan
-    // ) external onlyAdmin {
-    //     Position storage pos = positions[positionId];
-    //     (uint256 collateralUsd, uint256 debtUsd) =
-    //         venues[pos.currentVenue].adapter.getPositionUsd(pos.supplyAsset, pos.borrowAsset, address(this));
-    //     uint256 protocolLLtv = venues[pos.currentVenue].adapter.lltv(pos.currentVenue);
-
-    //     require(pos.status == PositionStatus.Active, "inactive");
-    //     require(targetLTV > 0 && targetLTV < protocolLLtv, "bad target");
-
-    //     uint256 currentLTV = debtUsd.wDiv(collateralUsd);
-
-    //     if (targetLTV > currentLTV) {
-    //         // Build LeverageData compatible with your Rebalancer
-    //         LeverageData memory data = LeverageData({
-    //             supplyAsset: pos.supplyAsset,
-    //             borrowAsset: pos.borrowAsset,
-    //             initialSupply: pos.totalSupplied,
-    //             borrowAmount: pos.totalBorrowed,
-    //             flashLoanAmount: flashLoanAmount,
-    //             venue: pos.currentVenue,
-    //             swapCalldata: swapData
-    //         });
-
-    //         // Make the flash-backed leverage call
-    //         leverage(data, routeForFlashLoan);
-
-    //         // will supply flashLoanAmount
-
-    //         // NOTE: update accounting conservatively: we cannot know exact swapped amount on-chain here.
-    //         pos.totalBorrowed += borrowAmount;
-    //         pos.totalSupplied += flashLoanAmount; // approximate - replace with adapter read if available
-    //     } else {
-    //         // Delever: need to repay 'repayAmount' of borrowAsset; flashLoan must be in borrowAsset
-    //         uint256 repayAmount = pos.totalBorrowed - (pos.totalSupplied * targetLTV) / 1e18;
-
-    //         // swapData must be supplyAsset -> borrowAsset; amountIn should be withdrawAmount (collateral units)
-    //         // require(swapData.tokenIn == pos.supplyAsset, "swapData.tokenIn must be supplyAsset for delever");
-    //         // require(swapData.tokenOut == pos.borrowAsset, "swapData.tokenOut must be borrowAsset for delever");
-    //         // // caller should set swapData.amountIn to expected withdrawAmount (off-chain computed)
-    //         // // We'll accept it as-is and rely on adapter/exec to revert if insufficient
-    //         DeleverageData memory d = DeleverageData({
-    //             supplyAsset: pos.supplyAsset,
-    //             borrowAsset: pos.borrowAsset,
-    //             repayAmount: repayAmount,
-    //             withdrawAmount: borrowAmount,
-    //             venue: pos.currentVenue,
-    //             swapCalldata: swapData
-    //         });
-
-    //         deleverage(d, routeForFlashLoan);
-
-    //         pos.totalBorrowed -= repayAmount;
-    //         pos.totalSupplied -= borrowAmount; // approximate
-    //     }
-    // }
-
-    /**
-     * @notice Rebalance position to different venue
-     */
     function migratePosition(uint256 positionId, bytes32 toVenue, uint16 routeForFlashLoan) external onlyAdmin {
         Position storage position = _positionStorage().positions[positionId];
         require(position.status == PositionStatus.Active, "Not active");
@@ -232,9 +158,6 @@ contract StrategyManager is
             borrowAsset: position.borrowAsset
         });
 
-        console.log("moveSupplyAmount: ", rebalanceData.moveSupplyAmount);
-        console.log("moveBorrowAmount: ", rebalanceData.moveBorrowAmount);
-
         rebalance(rebalanceData, routeForFlashLoan);
 
         position.currentVenue = toVenue;
@@ -248,9 +171,8 @@ contract StrategyManager is
         onlyPreLiquidator
         returns (uint256, uint256)
     {
-        // console.log("executePreLiquidation: seizeAmount", seizeAmount);
         Position storage position = _positionStorage().positions[positionId];
-        require(position.status == PositionStatus.Active, "Not active");
+        if (position.status != PositionStatus.Active) InvalidCaller.selector.revertWith();
         VenueInfo memory venue = _venueStorage().venues[position.currentVenue];
 
         // Take repay amount from Liquidator
@@ -268,7 +190,6 @@ contract StrategyManager is
 
         // Send collateral to keeper
         position.supplyAsset.safeTransfer(keeper, seizeAmount);
-        // console.log("executePreLiquidation: seizeAmount", seizeAmount);
 
         // Update position state
         position.totalBorrowed -= repayAmount;
@@ -311,8 +232,31 @@ contract StrategyManager is
         calldataGenerator = IUniversalLendingWrapper(_wrapper);
     }
 
-    function getDeployedValue(address vault) external view returns (uint256) {
-        return 0;
+    function getDeployedValue(address vault) external view returns (uint256 totalValue) {
+        uint256[] memory positions = _vaultStorage().vaultPositions[vault];
+        VenueStorage storage venueStorage = _venueStorage();
+
+        for (uint256 i = 0; i < positions.length; i++) {
+            Position memory position = _positionStorage().positions[positions[i]];
+            if (position.status == PositionStatus.Active) {
+                IProtocolAdapter adapter = venueStorage.venues[position.currentVenue].adapter;
+                try adapter.getPositionUsd(position.supplyAsset, position.borrowAsset, address(this)) returns (
+                    uint256 collateralUsd, uint256 debtUsd
+                ) {
+                    // Net position value = collateral - debt
+                    if (collateralUsd > debtUsd) {
+                        uint256 netUsd = collateralUsd - debtUsd;
+                        // Convert to vault's underlying asset
+                        totalValue += adapter.usdToTokenUnits(position.supplyAsset, netUsd);
+                    }
+                } catch {
+                    // Fallback to recorded amounts if adapter fails
+                    totalValue += position.totalSupplied > position.totalBorrowed
+                        ? position.totalSupplied - position.totalBorrowed
+                        : 0;
+                }
+            }
+        }
     }
 
     function _authorizeUpgrade(address) internal override onlyAdmin {}

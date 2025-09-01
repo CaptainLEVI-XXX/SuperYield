@@ -29,10 +29,6 @@ abstract contract PreLiquidationCore {
     error InvalidLTV();
     error InvalidParameters();
 
-    /**
-     * @notice Calculate LIF and LCF based on current LTV
-     * @dev Linear interpolation between preLltv and LLTV
-     */
     function calculateLifLcf(
         uint256 currentLtv,
         uint256 preLltv,
@@ -52,10 +48,6 @@ abstract contract PreLiquidationCore {
         lcf = params.preLCF1 + quotient.wMul(params.preLCF2 - params.preLCF1);
     }
 
-    /**
-     * @notice Validate pre-liquidation parameters
-     * @dev Ensures parameters maintain position health
-     */
     function validateParams(PreLiquidationParams memory params, uint256 protocolLltv) public pure {
         if (params.preLltv >= protocolLltv) InvalidLTV.selector.revertWith();
         if (params.preLCF1 > params.preLCF2) InvalidParameters.selector.revertWith();

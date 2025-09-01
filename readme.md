@@ -13,7 +13,7 @@
 
 **Hybrid Approach**: Partially monolithic ExecutionEngine with modular adapters
 
-- **Benefits**: $20-50 gas savings per transaction, atomic operations, reduced complexity
+- **Benefits**: gas savings per transaction, atomic operations, reduced complexity
 - **Tradeoff**: Less modularity in core components for significant UX improvement
 
 ### How It Compares to InstaDapp Lite
@@ -22,7 +22,7 @@
 - Single monolithic contract with ERC4626 + leverage logic
 - Customized for specific strategies (e.g., wstETH/ETH)
 - Gas-optimized but less flexible
-- Not open-source (analyzed via Etherscan transactions)
+- Not open-source (analyzed via Etherscan transactions**File**: `test.sol`)
 
 #### SuperYield Architecture:
 - Three main components with clear separation of concerns
@@ -48,7 +48,7 @@
 - Queued withdrawals with batch processing
 - Price per share (PPS) tracking with NAV calculation
 - Emergency pause functionality
-- Reentrancy protection using transient storage
+- Reentrancy protection using transient storage(tstore/tload)
 
 ### 2. StrategyManager (ExecutionEngine)
 **File**: `src/engine/ExecutionEngine.sol`
@@ -70,7 +70,7 @@
 
 #### Main Features:
 - Inspired by Morpho Blue pre-liquidation system
-- Supports multiple protocols (Aave V3, Morpho, Spark, extensible)
+- Supports multiple protocols (Aave V3, Morpho, extensible)
 - Linear LIF/LCF scaling based on LTV position
 - Both keeper-funded and flash loan liquidations
 
@@ -114,22 +114,33 @@ Keeper Incentive: Profit = SeizedCollateral × LIF - RepaidDebt
 
 ## Main System Flows
 
-### 1. Deposit Flow
+### 1. Deposit Flow             129918-gas  optimizer runs: 100000
 ``` bash
 User → SuperVault.deposit()
 ├── Transfer assets from user
 ├── Mint shares based on current PPS
 ├── Update vault state (totalIdle)
 └── Keep reserves for instant withdrawals
-Alternative: ETH/Asset Wrappers
+```
+### Alternative:                295,239-gas optimizer runs: 100000   | Instadapp fees (540,399 / 324,037)
+``` bash
+ETH/Asset Wrappers
 ├── EthWrapper: ETH → WETH → Vault Asset → Deposit
 └── AssetWrapper: User Token → Vault Asset → Deposit
 ```
 
-### 2. Withdrawal Flow
+
+### 2. Withdrawal Flow             19,268-gas  optimizer runs: 100000    | Instadapp fees (204,255 | 122,942)
 
 ``` bash
 #### Instant Withdrawal:
+User → SuperVault.withdraw()
+├── Check reserves availability
+├── Transfer assets directly from reserves
+└── Update vault state
+```
+### 2. Withdrawal With Asset/ETH wrapper             255610-gas optimizer runs: 100000  |  instadapp fees (688,730 | 416,919)
+```bash
 User → SuperVault.withdraw()
 ├── Check reserves availability
 ├── Transfer assets directly from reserves
@@ -153,7 +164,7 @@ User → SuperVault.claimWithdrawal()
 
 
 
-### 3. Open Position Flow
+### 3. Open Position Flow     gasinfo 1167767 , optimizer runs: 100000
 ``` bash
 Admin → StrategyManager.openPosition()
 ├── 1. Take supply asset from vault (e.g., 5000 USDC)
@@ -165,7 +176,7 @@ Admin → StrategyManager.openPosition()
 └── 7. Store position data (74% LTV achieved)
 ```
 
-### 4. Close Position Flow
+### 4. Close Position Flow    gas Info 355734 , optimizer runs: 100000
 ``` bash
 Admin → StrategyManager.closePosition()
 ├── 1. Flash loan borrowed asset (1.4 WETH)
@@ -176,7 +187,7 @@ Admin → StrategyManager.closePosition()
 └── 6. Return remaining assets to vault
 ```
 
-### 5. Migrate Position Flow
+### 5. Migrate Position Flow    gas Info 408327 , optimizer runs: 100000
 ``` bash
 Admin → StrategyManager.migratePosition()
 ├── 1. Flash loan borrowed asset amount (e.g., 1.4 WETH)
@@ -190,7 +201,7 @@ Admin → StrategyManager.migratePosition()
 
 ### 6. Pre-liquidation Flow
 
-#### Regular Pre-liquidation:
+#### Regular Pre-liquidation:    // 423,598-gas , optimizer runs: 100000
 ``` bash
 Keeper → PreLiquidationManager.preLiquidate()
 ├── 1. Check position health (LTV > preLLTV threshold)
@@ -201,7 +212,7 @@ Keeper → PreLiquidationManager.preLiquidate()
 └── 6. Keeper profits from liquidation bonus
 ```
 
-#### Flash Loan Pre-liquidation:
+#### Flash Loan Pre-liquidation:     // 591,225-gas , optimizer runs: 100000
 ``` bash
 Keeper → PreLiquidationManager.preLiquidateWithFlashLoan()
 ├── 1. Check position health
@@ -230,7 +241,8 @@ Keeper → PreLiquidationManager.preLiquidateWithFlashLoan()
 - **Tradeoffs**: Larger contract size
 
 ### 3. Fixed-Term Integration
-**Decision**: Not implemented in current version 
+**Decision**: Not implemented as I though Morpho V2 and Term finance both are different kind of protocols..integration of these protocols will 
+not go well with the current preliquidation system.that Why I though to not include fixed-term protocols in the current system as it would increase the complexity of the system. 
 
 - Because of the different operational complexity (Term Finance auctions, Pendle PT/YT splits) I though it would be best if we dont integrate this in the current version,but we can have Separate strategy vaults for fixed-term protocols
 - **Future**: Two-tier system with FixedYieldManager for term products

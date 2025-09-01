@@ -14,4 +14,6 @@ interface ISuperVault {
     function balanceOf(address owner) external view returns (uint256);
 
     function approve(address spender, uint256 amount) external;
+    function provideFundsToEngine(uint256 amount) external;
+    function recallFromEngine(uint256 amount) external;
 }

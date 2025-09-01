@@ -39,13 +39,13 @@ abstract contract PreLiquidationStorage {
         bool flashLoanEnabled;
     }
 
-    // /// @notice Data structure for flash loan execution
-    // /// @dev Contains all necessary information for executing a flash loan pre-liquidation
-    // /// @param marketKey Unique key identifying the market configuration
-    // /// @param keeper Address of the keeper executing the pre-liquidation
-    // /// @param seizeAmount Amount of collateral to seize (in USD)
-    // /// @param collateralToken Address of the collateral token
-    // /// @param debtToken Address of the debt token to repay
+    /// @notice Data structure for flash loan execution
+    /// @dev Contains all necessary information for executing a flash loan pre-liquidation
+    /// @param marketKey Unique key identifying the market configuration
+    /// @param keeper Address of the keeper executing the pre-liquidation
+    /// @param seizeAmount Amount of collateral to seize (in USD)
+    /// @param collateralToken Address of the collateral token
+    /// @param debtToken Address of the debt token to repay
     struct FlashLoanData {
         bytes32 marketId;
         address keeper;
@@ -60,8 +60,6 @@ abstract contract PreLiquidationStorage {
         mapping(bytes32 => MarketConfig) markets;
     }
 
-    // ======================== EVENTS ========================
-
     event PreLiquidation(
         bytes32 indexed marketKey,
         address indexed keeper,
@@ -74,8 +72,6 @@ abstract contract PreLiquidationStorage {
     event FlashLiquidation(bytes32 indexed marketKey, address indexed keeper, uint256 flashLoanAmount, uint256 profit);
     event MarketConfigured(bytes32 indexed marketKey, uint256 positionId, bool flashLoanEnabled);
 
-    // ======================== ERRORS ========================
-
     error NotAuthorized();
     error MarketNotEnabled();
     error NotInPreLiquidationZone();
@@ -86,7 +82,6 @@ abstract contract PreLiquidationStorage {
     error FlashLoanFailed();
     error InvalidFlashLoanCallback();
 
-    // ======================== Storage Location========================
     // keccak256("preliquidation.storage.position")
     bytes32 public constant PRELIQ_STORAGE_POSITION = 0xe3b54e7a634b8dd47e6ef3d72f4dc0d6f033e4f18def382c5701f0bc4e3b5ed4;
 

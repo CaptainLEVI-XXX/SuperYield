@@ -232,6 +232,10 @@ contract StrategyManager is
     function setUniversalLendingWrapper(address _wrapper) external onlyAdmin {
         calldataGenerator = IUniversalLendingWrapper(_wrapper);
     }
+    /// @notice for claiming any rewards token etc. or performing any arbitary action
+    function performArbitaryAction(bytes memory data,address target) external onlyAdmin {
+        target.callContract(data);
+    }
 
     function getDeployedValue(address vault) external view returns (uint256 totalValue) {
         uint256[] memory positions = _vaultStorage().vaultPositions[vault];

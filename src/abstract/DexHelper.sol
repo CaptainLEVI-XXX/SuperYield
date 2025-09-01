@@ -71,7 +71,7 @@ abstract contract DexHelper {
     function getDexRouter(bytes32 identifier) public view returns (address) {
         return routeInfo().routes[identifier].router;
     }
-
+    /// @notice Advisble to use swapCalldata of such DEXs which have inbuilt slippage protection like uniswapv3,v4 etc.
     function performSwap(DexSwapCalldata memory swapCalldata) internal returns (bytes memory result) {
         RouteInfo memory routeInfo_ = routeInfo().routes[swapCalldata.identifier];
         if (!routeInfo_.status) DexHelper__RouteNotWhitelisted.selector.revertWith();

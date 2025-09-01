@@ -302,17 +302,6 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
         }
     }
 
-    function rebalance() external lockUnlock notPaused {
-        uint256 targetReserve = _reserveTarget();
-        uint256 currentIdle = _getAvailableIdle();
-
-        if (currentIdle > targetReserve * 2) {
-            // Too much idle - deploy excess to engine
-            uint256 toDeploy = currentIdle - targetReserve;
-            _provideFundsToEngine(toDeploy);
-        }
-    }
-
     function provideFundsToEngine(uint256 amount) external {
         if (msg.sender != executionEngine && msg.sender != admin()) NotAuthorized.selector.revertWith();
         _provideFundsToEngine(amount);

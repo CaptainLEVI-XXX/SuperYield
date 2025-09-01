@@ -268,7 +268,7 @@ contract SuperVault is ERC20, ERC4626, Admin2Step, Pausable {
             return gross > totalClaimableAssets ? gross - totalClaimableAssets : 0;
         } catch {
             // Fallback if execution engine fails
-            return idleBalance > totalClaimableAssets ? idleBalance - totalClaimableAssets : 0;
+            return idleBalance > totalClaimableAssets ? (idleBalance - totalClaimableAssets) : 0;
         }
     }
 

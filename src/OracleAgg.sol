@@ -121,9 +121,6 @@ contract OracleAggregator {
         return primaryPrice;
     }
 
-    /**
-     * @notice Get price from specific oracle type
-     */
     function _getOraclePrice(OracleConfig memory config, address base, address quote)
         internal
         view
